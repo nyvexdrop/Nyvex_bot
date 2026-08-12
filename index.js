@@ -1,9 +1,12 @@
 // =========================================================
 // NYVEX DROP - Bot de WhatsApp con IA (Gemini gratis)
 // Usa: WhatsApp Cloud API (Meta, gratis) + Gemini API (gratis)
+// Catálogo y fotos desde productos.json e img/ (misma info que la página web)
 // =========================================================
 require("dotenv").config();
 const express = require("express");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 app.use(express.json());
@@ -23,61 +26,136 @@ const MODELOS_GEMINI = [
 ];
 const PORT = process.env.PORT || 3000;
 
-// ---------- CONOCIMIENTO DE NYVEX DROP ----------
+// ---------- CATÁLOGO (una sola fuente: productos.json) ----------
+const PRODUCTOS = JSON.parse(
+  fs.readFileSync(path.join(__dirname, "productos.json"), "utf8")
+);
+
+// Servir las fotos de los productos (https://<url>/img/xxx.png)
+app.use("/img", express.static(path.join(__dirname, "img")));
+
+const CATALOGO_DESCRIPCIONES = PRODUCTOS.map((p, i) => {
+  const tallas = p.tallas ? ` Tallas: ${p.tallas}.` : "";
+  return `${i + 1}. ${p.nombre} - $${p.precio}. ${p.descripcion}${tallas}`;
+}).join("\n");
+
+const RESUMEN_CATEGORIAS = PRODUCTOS.reduce((acc, p) => {
+  (acc[p.categoria] = acc[p.categoria] || []).push(p);
+  return acc;
+}, {});
+
+const CATALOGO_TEXTO = Object.entries(RESUMEN_CATEGORIAS)
+  .map(([cat, prods]) => {
+    const emoji = prods[0].emoji || "🛍️";
+    return `${emoji} ${cat}: ${prods.map((p) => `${p.nombre} $${p.precio}`).join(", ")}`;
+  })
+  .join("\n");
+
+// ---------- CONOCIMIENTO DE NYVEX DROP (entrenamiento de ventas) ----------
 const INSTRUCCIONES = `
-Eres "Nyvex", el asistente virtual de ventas de "Nyvex Drop" (@nyvex_drop), tienda de sudaderas, audífonos, accesorios, celulares y perfumes. Respondes por WhatsApp en ESPAÑOL de México, breve (máximo 3-4 líneas), amable, con tono juvenil y con emojis.
+Eres "Nyvex", el asistente virtual de ventas de "Nyvex Drop" (@nyvex_drop), tienda de sudaderas, audífonos, accesorios, celulares y perfumes. Respondes por WhatsApp en ESPAÑOL de México, breve (máximo 4 líneas), amable, cercano, con tono juvenil y con emojis.
 
-REGLAS GENERALES:
-- NUNCA inventes productos, precios, tallas ni características que no estén en el catálogo.
-- Precios SIEMPRE con $ y con la cifra exacta del catálogo (ej. $190, no $190.00).
-- Si el cliente pregunta algo fuera del catálogo (estado de un pedido, pagos en línea, garantías, envío a otra ciudad, apartar producto), respóndele que un asesor del equipo lo atiende al momento.
-- Si manda saludos o chistes, salúdalo y pregúntale qué producto le interesa.
-- Si preguntan "¿qué venden?", muestra el resumen del catálogo por categorías.
+TU OBJETIVO: GENERAR VENTAS. Guía al cliente desde la duda hasta cerrar el pedido y el pago. Nunca discutas y siempre cuida al cliente.
 
-DATOS DEL NEGOCIO:
-- Forma de pago: transferencia bancaria.
-- Zona de entrega: Ameca, Ozumba, San Juan Atlautla, Tepetlixpa y Tecalco. El envío es local (de esas zonas).
+FOTOS:
+- Cuando el cliente pregunte por un producto, el sistema le envía automáticamente la FOTO del producto. Menciónale algo como "te envío la foto 😉" y luego dale los datos.
+
+PAGOS:
+- Forma de pago: transferencia o depósito bancario.
+- CLABE para depositar: 638180010134011001.
+- Cuando el cliente quiera pagar, dale la CLABE y pídele su comprobante para confirmar el pedido.
+
+ENTREGAS:
+- Zona de entrega: Ameca, Ozumba, San Juan Atlautla, Tepetlixpa y Tecalco (envío local).
+- Si pregunta por otra zona o quiere apartar un producto, dile que un asesor del equipo le confirma la entrega.
 - Instagram: @nyvex_drop.
-- Para cerrar la venta: confirma el producto y talla (si aplica), y dile que el pago es por transferencia y que el asesor le pasa los datos para completar el pedido.
-
-CATÁLOGO COMPLETO (precio de venta final):
-1. Camiseta Flow para Hombre - $190. Sudadera estampada con coches deportivos, de lujo y de carreras. Tejido suave, bolsillo delantero. Negro. Tallas S, M, L, XL.
-2. Capucha Dragón para Hombre - $199. Estampado de dragón, cordón ajustable, bolsillo canguro. Negro. Talla estándar MX.
-3. Sudadera Gringa para Hombre - $190. Estampado motivacional en inglés, poliéster ligero con capucha. Negro. Tallas S, M, L, XL.
-4. Sudadera Katana Japonesa para Hombre - $190. Estampado de katana y flor de cerezo rosa con caracteres japoneses. Negro. Tallas S, M, L, XL.
-5. Auriculares Inalámbricos Pro - $130. Bluetooth 5.3, sonido lossless, hasta 24h de música. Blancos. IMPORTANTE: sin cancelación de ruido (sin ANC). Compatibles con todas las marcas.
-6. AirPods 2 Pro con Cancelación - $300. Cancelación de ruido REAL, entrada tipo C, interfaz iOS original, GPS (app Encontrar), carga inalámbrica, batería 6-7h. Certificados Apple.
-7. AirPods Pro 3 Traducción Real - $370. Cancelación real 2x mejor, traductor de idiomas en vivo, mide ritmo cardiaco, GPS, entrada tipo C, batería 6-7h. Certificados Apple.
-8. AirPods 4 - $354. Cancelación de ruido real, entrada tipo C, interfaz iOS, GPS, batería 7-8h. Certificados Apple.
-9. AirPods Max - $370. Audífonos de diadema, cancelación de ruido real, interfaz iOS, entrada tipo C, GPS. Cómodos para uso prolongado.
-10. Cable C a Lightning (1m) - $75. Carga rápida y transferencia de datos. Compatible con iPhone, iPad y AirPods.
-11. Batería MagSafe 5000 mAh - $190. Carga inalámbrica magnética, entrada USB-C, compacta y ligera.
-12. Batería MagSafe 10,000 mAh - $240. Mayor capacidad para varios ciclos de carga, carga inalámbrica, USB-C.
-13. iPhone 14 - $6,300. 128 GB, eSIM AT&T, estética 10/10, sin piezas cambiadas, batería al 98%.
-14. Rasasi Hawas Ice for Him - $1,100. Perfume masculino fresco, dulce y acuático, ideal para uso diario y ocasiones especiales.
-
-RESUMEN POR CATEGORÍAS (cuando pidan el catálogo general):
-🧥 Sudaderas: Camiseta Flow $190, Capucha Dragón $199, Sudadera Gringa $190, Sudadera Katana $190.
-🎧 Audífonos: Inalámbricos Pro $130 (sin ANC), AirPods 2 Pro $300, AirPods Pro 3 $370, AirPods 4 $354, AirPods Max $370.
-🔌 Accesorios: Cable C-Lightning $75, Batería MagSafe 5000 $190, Batería MagSafe 10000 $240.
-📱 Celulares: iPhone 14 $6,300.
-🧴 Perfumes: Rasasi Hawas Ice $1,100.
 
 FLUJO DE VENTA:
-- Cliente pregunta por un producto: recomiéndalo con su precio exacto y 1-2 características principales. Pregúntale si quiere talla (si aplica) o si se lo apartas.
-- Cliente quiere comprar: confirma el pedido, recuerda la talla y dile: "Perfecto, el pago es por transferencia, un asesor te pasa los datos para confirmar tu pedido".
-- Cliente pregunta por envío: recuérdale que entregamos en Ameca, Ozumba, San Juan Atlautla, Tepetlixpa y Tecalco. Si pregunta por otra zona, que lo confirme con el asesor.
-- Mantén TODO breve: máximo 3-4 líneas.
+1. Cliente pregunta por un producto: recomiéndalo con su precio exacto y 1-2 características principales. Pregunta la talla si aplica (S, M, L, XL o estándar).
+2. Cliente quiere comprar: confirma producto y talla, y dile: "El pago es por transferencia. La CLABE para depositar es 638180010134011001. Envíame tu comprobante y confirmo tu pedido 😊".
+3. Cliente manda comprobante: dile que su pedido queda confirmado y que un asesor coordina la entrega.
+4. Si pregunta algo que no está en el catálogo (estado de pedido, garantías, pagos en línea): deriva al asesor.
+
+CATÁLOGO COMPLETO (precio de venta final, NO inventar precios ni productos):
+${CATALOGO_DESCRIPCIONES}
+
+RESUMEN RÁPIDO POR CATEGORÍAS:
+${CATALOGO_TEXTO}
+
+REGLAS:
+- NUNCA inventes productos, precios, tallas ni características.
+- Precios SIEMPRE con $ y con la cifra exacta del catálogo (ej. $190, no $190.00).
+- Respuestas cortas: máximo 4 líneas. Usa viñetas si hace falta.
+- Si el cliente manda saludos, salúdalo y pregúntale qué le interesa.
+- Si preguntan "¿qué venden?", muestra el resumen por categorías.
 `;
 
-const CATALOGO_TEXTO = `
-Catálogo Nyvex Drop:
-🧥 Sudaderas: Camiseta Flow $190, Capucha Dragón $199, Sudadera Gringa $190, Sudadera Katana $190.
-🎧 Audífonos: Inalámbricos Pro $130 (sin ANC), AirPods 2 Pro $300, AirPods Pro 3 $370, AirPods 4 $354, AirPods Max $370.
-🔌 Accesorios: Cable C-Lightning $75, Batería MagSafe 5000 $190, Batería MagSafe 10000 $240.
-📱 Celulares: iPhone 14 $6,300.
-🧴 Perfumes: Rasasi Hawas Ice $1,100.
-`;
+// ---------- DETECTOR DE PRODUCTO EN EL MENSAJE (para mandar la foto) ----------
+function normalizar(t) {
+  return (t || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9 ]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const CLAVES_PRODUCTO = [
+  { nombre: "AirPods Max", palabras: ["airpods max", "diadema"] },
+  { nombre: "AirPods Pro 3 Traducción Real", palabras: ["pro 3", "traduccion", "traductor"] },
+  { nombre: "AirPods 2 Pro con Cancelación", palabras: ["airpods 2", "2 pro", "pro 2"] },
+  { nombre: "AirPods 4", palabras: ["airpods 4"] },
+  { nombre: "Auriculares Inalámbricos Pro", palabras: ["inalambricos pro", "inalambrico pro", "auriculares pro", "auricular pro", "audifonos pro", "audifono pro", "earbuds", "auriculares", "audifonos"] },
+  { nombre: "Capucha Dragón para Hombre", palabras: ["capucha dragon", "dragon"] },
+  { nombre: "Camiseta Flow para Hombre", palabras: ["camiseta flow", "flow"] },
+  { nombre: "Sudadera Katana Japonesa para Hombre", palabras: ["katana", "japonesa"] },
+  { nombre: "Sudadera Gringa para Hombre", palabras: ["sudadera gringa", "gringa"] },
+  { nombre: "Cable C a Lightning (1m)", palabras: ["cable"] },
+  { nombre: "Batería MagSafe 5000 mAh", palabras: ["magsafe 5000", "bateria 5000"] },
+  { nombre: "Batería MagSafe 10,000 mAh", palabras: ["magsafe 10000", "bateria 10000"] },
+  { nombre: "iPhone 14", palabras: ["iphone"] },
+  { nombre: "Rasasi Hawas Ice for Him", palabras: ["rasasi", "hawas", "perfume"] },
+];
+
+function buscarProductos(mensaje) {
+  const m = normalizar(mensaje);
+  if (m.length < 4) return [];
+
+  // 1) Coincidencia específica → una sola foto
+  for (const clave of CLAVES_PRODUCTO) {
+    if (clave.palabras.some((p) => m.includes(p))) {
+      const prod = PRODUCTOS.find((p) => p.nombre === clave.nombre);
+      return prod ? [prod] : [];
+    }
+  }
+
+  // 2) Categorías genéricas → fotos de todo lo que aplique
+  const resultados = [];
+
+  if (/\b(sudadera|sudaderas|capucha|capuchas|camiseta|camisetas)\b/.test(m)) {
+    resultados.push(...PRODUCTOS.filter((p) => p.categoria === "sudaderas"));
+  }
+  if (/\b(airpods|audifono|audifonos|auricular|auriculares|bluetooth)\b/.test(m)) {
+    const def = PRODUCTOS.find((p) => p.nombre.includes("2 Pro"));
+    if (def) resultados.push(def);
+  }
+  if (/\b(magsafe|bateria|baterias)\b/.test(m)) {
+    resultados.push(...PRODUCTOS.filter((p) => p.categoria === "accesorios" && p.nombre.includes("MagSafe")));
+  }
+  if (/\b(celular|celulares|telefono|iphone)\b/.test(m) && !/\biphone\b/.test(m)) {
+    const cel = PRODUCTOS.find((p) => p.categoria === "celulares");
+    if (cel) resultados.push(cel);
+  }
+  if (/\b(perfume|perfumes|fragancia|fragancias)\b/.test(m) && !/\b(rasasi|hawas)\b/.test(m)) {
+    const perf = PRODUCTOS.find((p) => p.categoria === "perfumes");
+    if (perf) resultados.push(perf);
+  }
+
+  return resultados.filter(
+    (p, i, arr) => arr.findIndex((x) => x.nombre === p.nombre) === i
+  );
+}
 
 // ---------- VERIFICACIÓN DEL WEBHOOK (Meta lo llama al configurar) ----------
 app.get("/webhook", (req, res) => {
@@ -102,6 +180,8 @@ app.post("/webhook", async (req, res) => {
 
     console.log("📥 Webhook recibido de Meta:", JSON.stringify(body).slice(0, 500));
 
+    const baseUrl = process.env.SITE_URL || `https://${req.get("host")}`;
+
     for (const entry of body.entry) {
       for (const change of entry.changes || []) {
         if (change.field !== "messages") continue;
@@ -125,6 +205,14 @@ app.post("/webhook", async (req, res) => {
             else if (datos.type === "list_reply") textoUsuario = datos.list_reply.title;
           } else {
             textoUsuario = "[el cliente envió una imagen o archivo]";
+          }
+
+          // Foto del producto si el mensaje lo menciona
+          const productos = buscarProductos(textoUsuario);
+          for (const prod of productos) {
+            const urlImagen = `${baseUrl}/img/${encodeURIComponent(prod.imagen.replace(/^img\//, ""))}`;
+            const caption = `${prod.nombre} - $${prod.precio}`;
+            await enviarWhatsAppImagen(emisor, urlImagen, caption);
           }
 
           const respuesta = await generarRespuesta(textoUsuario);
@@ -153,7 +241,7 @@ async function generarRespuesta(mensaje) {
           ],
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 300
+            maxOutputTokens: 400
           }
         })
       });
@@ -196,6 +284,29 @@ async function enviarWhatsApp(para, texto) {
   console.log("📤 Respuesta de WhatsApp API:", res.status, respuesta.slice(0, 300));
 }
 
+// ---------- ENVIAR FOTO DEL PRODUCTO ----------
+async function enviarWhatsAppImagen(para, urlImagen, caption) {
+  const url = `https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${WHATSAPP_TOKEN}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      recipient_type: "individual",
+      to: para,
+      type: "image",
+      image: { link: urlImagen, caption }
+    })
+  });
+
+  const respuesta = await res.text();
+  console.log("🖼️ Respuesta imagen:", res.status, respuesta.slice(0, 200));
+}
+
 // ---------- RUTA PRINCIPAL (para revisar que esté vivo) ----------
 app.get("/", (req, res) => {
   res.send("🤖 Nyvex Drop Bot activo");
@@ -203,7 +314,7 @@ app.get("/", (req, res) => {
 
 // ---------- ENDPOINT PARA VER EL CATÁLOGO (prueba) ----------
 app.get("/catalogo", (req, res) => {
-  res.type("text/plain; charset=utf-8").send(CATALOGO_TEXTO);
+  res.type("text/plain; charset=utf-8").send(`Catálogo Nyvex Drop:\n${CATALOGO_TEXTO}`);
 });
 
 app.listen(PORT, () => {

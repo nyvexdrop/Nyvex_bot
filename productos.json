@@ -1,0 +1,142 @@
+[
+  {
+    "nombre": "Camiseta Flow para Hombre",
+    "precio": 190,
+    "categoria": "sudaderas",
+    "emoji": "🧥",
+    "imagen": "img/sudaderaporshe.png",
+    "descripcion": "Nueva Camiseta Flow para Hombre. Sudadera estampada diaria con diseños de coches deportivos, coches de lujo y coches de carreras. Tejido suave y confortable, bolsillo delantero. Color: Negro. Tallas: S, M, L, XL. Envío local. Ideal para regalo en Pascua, Halloween, Acción de Gracias y Navidad.",
+    "tallas": "S, M, L, XL",
+    "envio": "local"
+  },
+  {
+    "nombre": "Capucha Dragón para Hombre",
+    "precio": 199,
+    "categoria": "sudaderas",
+    "emoji": "🧥",
+    "imagen": "img/sudaderadragon.png",
+    "descripcion": "Capucha para hombre con estampado de dragón, cordón ajustable y bolsillo canguro. Ajuste cómodo, estilo casual ideal para otoño e invierno. Color: Negro. Talla: Estándar MX. Envío local.",
+    "tallas": "Estándar MX",
+    "envio": "local"
+  },
+  {
+    "nombre": "Sudadera Gringa para Hombre",
+    "precio": 190,
+    "categoria": "sudaderas",
+    "emoji": "🧥",
+    "imagen": "img/sudaderagriega.png",
+    "descripcion": "Casual para hombres, estilo con estampado motivacional en inglés. Ligera, elástica, tejido de poliéster, ajuste regular. Sudadera con capucha. Color: Negro. Tallas: S, M, L, XL. Envío local.",
+    "tallas": "S, M, L, XL",
+    "envio": "local"
+  },
+  {
+    "nombre": "Sudadera Katana Japonesa para Hombre",
+    "precio": 190,
+    "categoria": "sudaderas",
+    "emoji": "🧥",
+    "imagen": "img/sudaderakatana.png",
+    "descripcion": "Sudadera con capucha negra para hombre, con estampado gráfico único de katana y flor de cerezo rosa con caracteres japoneses. Cómoda, disponible en varias tallas. Perfecta para actividades al aire libre y uso diario casual. Color: Negro. Tallas: S, M, L, XL. Envío local.",
+    "tallas": "S, M, L, XL",
+    "envio": "local"
+  },
+  {
+    "nombre": "Auriculares Inalámbricos Pro",
+    "precio": 130,
+    "categoria": "audifonos",
+    "emoji": "🎧",
+    "imagen": "img/airpodspro.png",
+    "descripcion": "Auriculares inalámbricos Bluetooth de alta calidad. Sonido lossless, llamadas claras, hasta 24h de música, chip Bluetooth 5.3 mejorado (+80% calidad de sonido). Compatibles con todas las marcas de celulares. Almacén local, sin impuestos de importación. Color: Blanco. Envío local. Sin cancelación de ruido (no tienen ANC).",
+    "tallas": "",
+    "envio": "local"
+  },
+  {
+    "nombre": "AirPods 2 Pro con Cancelación",
+    "precio": 300,
+    "categoria": "audifonos",
+    "emoji": "🎧",
+    "imagen": "img/airpodspreo2.png",
+    "descripcion": "AirPods 2 Pro con cancelación de ruido REAL. Entrada tipo C, aparece la interfaz en iOS como los originales. Carga inalámbrica, incluye cable de carga y tamaños de almohadillas. GPS (emiten sonido para rastrearlos en la app 'Encontrar' de Apple). Certificados Apple. Control táctil en cada AirPod (cambiar canción y pausa). Batería de 6-7 horas. Envío local.",
+    "tallas": "",
+    "envio": "local"
+  },
+  {
+    "nombre": "AirPods Pro 3 Traducción Real",
+    "precio": 370,
+    "categoria": "audifonos",
+    "emoji": "🎧",
+    "imagen": "img/airpodspro3.png",
+    "descripcion": "AirPods Pro 3 con cancelación de ruido REAL, 2 veces mejor que la generación anterior. Entrada tipo C, interfaz en iOS como los originales. Carga inalámbrica. Traductor de idiomas en vivo y 100% funcional. Mide el ritmo cardiaco. GPS (emiten sonido para rastrearlos en la app 'Encontrar' de Apple). Certificados Apple. Control táctil en cada AirPod. Incluye tamaños de almohadillas. Batería de 6-7 horas. Envío local.",
+    "tallas": "",
+    "envio": "local"
+  },
+  {
+    "nombre": "AirPods 4",
+    "precio": 354,
+    "categoria": "audifonos",
+    "emoji": "🎧",
+    "imagen": "img/airpods4.png",
+    "descripcion": "AirPods 4 con cancelación de ruido REAL. Aparece la interfaz en iOS como los originales. Entrada tipo C. GPS (emiten sonido para rastrearlos en la app 'Encontrar' de Apple). Certificados Apple. Control táctil en cada AirPod (cambiar canción y pausa). Duración de batería de 7-8 horas. Envío local.",
+    "tallas": "",
+    "envio": "local"
+  },
+  {
+    "nombre": "AirPods Max",
+    "precio": 370,
+    "categoria": "audifonos",
+    "emoji": "🎧",
+    "imagen": "img/audifonosdiadema.png",
+    "descripcion": "AirPods Max, audífonos de diadema con cancelación de ruido REAL. Aparece la interfaz en iOS como los originales. Entrada tipo C, carga rápida. GPS (emiten sonido para rastrearlos en la app 'Encontrar' de Apple). Certificados Apple. Control táctil para cambiar canción y pausar. Cómodos para uso prolongado. Envío local.",
+    "tallas": "",
+    "envio": "local"
+  },
+  {
+    "nombre": "Cable C a Lightning (1m)",
+    "precio": 75,
+    "categoria": "accesorios",
+    "emoji": "🔌",
+    "imagen": "img/cablec.png",
+    "descripcion": "Cable de carga USB-C a Lightning de 1 metro. Compatible con iPhone, iPad, AirPods y otros dispositivos Apple. Carga rápida y transferencia de datos. Envío local.",
+    "tallas": "",
+    "envio": "local"
+  },
+  {
+    "nombre": "Batería MagSafe 5000 mAh",
+    "precio": 190,
+    "categoria": "accesorios",
+    "emoji": "🔋",
+    "imagen": "img/bateria5000.png",
+    "descripcion": "Batería portátil MagSafe de 5000 mAh. Carga inalámbrica por imanes, compatible con iPhone y AirPods. Compacta, ligera y con entrada USB-C. Ideal para llevar energía extra a donde vayas. Envío local.",
+    "tallas": "",
+    "envio": "local"
+  },
+  {
+    "nombre": "Batería MagSafe 10,000 mAh",
+    "precio": 240,
+    "categoria": "accesorios",
+    "emoji": "🔋",
+    "imagen": "img/bateria10000.png",
+    "descripcion": "Batería portátil MagSafe de 10,000 mAh. Carga inalámbrica por imanes, compatible con iPhone y AirPods. Mayor capacidad para varios ciclos de carga, con entrada USB-C. Perfecta para viajes y uso intenso. Envío local.",
+    "tallas": "",
+    "envio": "local"
+  },
+  {
+    "nombre": "iPhone 14",
+    "precio": 6300,
+    "categoria": "celulares",
+    "emoji": "📱",
+    "imagen": "img/iphone4.png",
+    "descripcion": "iPhone 14 de 128 GB con eSIM AT&T. Estética 10/10, sin piezas cambiadas. Batería al 98% de capacidad. Envío local.",
+    "tallas": "",
+    "envio": "local"
+  },
+  {
+    "nombre": "Rasasi Hawas Ice for Him",
+    "precio": 1100,
+    "categoria": "perfumes",
+    "emoji": "🧴",
+    "imagen": "img/RasasiHawasIce forHim.png",
+    "descripcion": "Perfume masculino con aroma fresco, dulce y elegante, perfecto para destacar en cualquier ocasión. Hawas Ice combina una sensación refrescante con un toque moderno y juvenil. Aroma acuático, ideal para días calurosos, citas, fiestas y uso diario. Estilo juvenil, limpio y llamativo. Presentación elegante, perfecta para colección o regalo. Envío local.",
+    "tallas": "",
+    "envio": "local"
+  }
+]
