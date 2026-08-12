@@ -12,6 +12,15 @@ const path = require("path");
 const app = express();
 app.use(express.json());
 
+// CORS: la tienda web (servida aquí o en otro dominio) puede usar la API
+app.use((req, res, next) => {
+  res.set("Access-Control-Allow-Origin", "*");
+  res.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.set("Access-Control-Allow-Headers", "Content-Type");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
+});
+
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
@@ -48,9 +57,10 @@ try {
 const RECIBOS_DIR = path.join(__dirname, "recibos");
 if (!fs.existsSync(RECIBOS_DIR)) fs.mkdirSync(RECIBOS_DIR, { recursive: true });
 
-// Servir fotos de productos y comprobantes
+// Servir fotos de productos, comprobantes y la tienda web (public/)
 app.use("/img", express.static(path.join(__dirname, "img")));
 app.use("/recibos", express.static(RECIBOS_DIR));
+app.use(express.static(path.join(__dirname, "public")));
 
 function guardarPedidos() {
   try {
@@ -322,6 +332,16 @@ function mensajeEstadoCliente(pedido) {
   return map[pedido.estado];
 }
 
+// Mensajes de rechazo de comprobante (falso / no coincide / borroso)
+const MENSAJES_RECHAZO = {
+  falso: (p) => `Hola *${p.nombre || "cliente"}* 😕 Revisamos tu comprobante y no pudimos validarlo. ¿Puedes reenviarlo, por favor? Si tienes dudas, un asesor te ayuda por aquí a confirmar tu pedido *${p.id}*.`,
+  no_coincide: (p) => `Hola *${p.nombre || "cliente"}* 😕 El comprobante que enviaste no coincide con los datos de tu pedido *${p.id}*. ¿Nos reenvías el comprobante correcto, por favor?`,
+  borroso: (p) => `Hola *${p.nombre || "cliente"}* 🙏 Tu comprobante se ve borroso y no lo alcanzamos a leer bien. ¿Puedes subirlo de nuevo con mejor calidad? Así confirmamos tu pedido al momento.`,
+};
+function mensajeRechazoCliente(pedido, motivo) {
+  return MENSAJES_RECHAZO[motivo] ? MENSAJES_RECHAZO[motivo](pedido) : "";
+}
+
 // ---------- COMANDOS DEL DUEÑO ----------
 // "confirmar ABC123", "enviando ABC123", "entregado ABC123" (el ID es opcional si solo hay uno pendiente)
 // Rechazo de comprobante: "falso ABC123", "no coincide ABC123", "borroso ABC123" → le avisan al cliente y le piden reenviarlo
@@ -347,12 +367,7 @@ async function procesoComandoOwner(texto) {
   if (!pedido) return "No hay pedidos pendientes para actualizar.";
 
   if (rechazo) {
-    const mensajes = {
-      falso: `Hola *${pedido.nombre || "cliente"}* 😕 Revisamos tu comprobante y no pudimos validarlo. ¿Puedes reenviarlo, por favor? Si tienes dudas, un asesor te ayuda por aquí a confirmar tu pedido *${pedido.id}*.`,
-      no_coincide: `Hola *${pedido.nombre || "cliente"}* 😕 El comprobante que enviaste no coincide con los datos de tu pedido *${pedido.id}*. ¿Nos reenvías el comprobante correcto, por favor?`,
-      borroso: `Hola *${pedido.nombre || "cliente"}* 🙏 Tu comprobante se ve borroso y no lo alcanzamos a leer bien. ¿Puedes subirlo de nuevo con mejor calidad? Así confirmamos tu pedido al momento.`,
-    };
-    await enviarWhatsApp(pedido.numero, mensajes[rechazo]);
+    await enviarWhatsApp(pedido.numero, mensajeRechazoCliente(pedido, rechazo));
     const motivo = rechazo === "falso" ? "falso" : rechazo === "no_coincide" ? "que no coincide" : "borroso";
     return `⚠️ Le avisaste a *${pedido.nombre || "cliente"}* que su comprobante (*${pedido.id}*) se ve *${motivo}* y le pediste reenviarlo.`;
   }
@@ -647,6 +662,82 @@ app.get("/config", (req, res) => {
   });
 });
 
+// ---------- API PARA LA TIENDA WEB ----------
+app.post("/api/pedido", async (req, res) => {
+  try {
+    const { nombre, numero, producto, talla } = req.body || {};
+    const num = (numero || "").replace(/[^0-9]/g, "").slice(-10);
+    const prod = PRODUCTOS.find((p) => p.nombre === (producto || ""));
+    const pedido = {
+      id: Math.random().toString(36).slice(2, 8).toUpperCase(),
+      fecha: new Date().toISOString(),
+      numero: num ? "52" + num : "",
+      nombre: (nombre || "Sin nombre").trim().slice(0, 60),
+      productos: prod ? [`${prod.nombre} - ${formatoPrecio(prod.precio)}`] : [(producto || "").trim()],
+      talla: talla || "",
+      texto: "🛒 Pedido desde la página web",
+      recibo: null,
+      estado: "pendiente",
+      origen: "web",
+    };
+    PEDIDOS.push(pedido);
+    guardarPedidos();
+    await notificarOwner(
+      `🛒 *PEDIDO DESDE LA WEB*\n👤 Cliente: ${pedido.nombre}\n📱 Número: ${pedido.numero || "no compartido"}\n📦 Producto: ${pedido.productos.join(", ")}\n👕 Talla: ${pedido.talla || "Estándar"}\n🕒 ${new Date().toLocaleString("es-MX")}\n➡️ Cuando caiga el pago responde: *"confirmar ${pedido.id}"*`
+    );
+    res.json({
+      ok: true,
+      id: pedido.id,
+      nombre: pedido.nombre,
+      productos: pedido.productos,
+      total: prod ? formatoPrecio(prod.precio) : "",
+    });
+  } catch (e) {
+    console.error("Error en /api/pedido:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo registrar el pedido" });
+  }
+});
+
+// Consulta de pedidos desde la web (por teléfono o por ID)
+app.get("/api/pedidos", (req, res) => {
+  const numero = (req.query.numero || "").replace(/[^0-9]/g, "");
+  const id = (req.query.id || "").toUpperCase();
+  let lista = PEDIDOS;
+  if (id) {
+    lista = lista.filter((p) => (p.id || "").toUpperCase() === id);
+  } else if (numero) {
+    lista = lista.filter((p) => (p.numero || "").replace(/[^0-9]/g, "").includes(numero));
+  }
+  res.json(
+    lista
+      .slice()
+      .reverse()
+      .map((p) => ({
+        id: p.id,
+        fecha: p.fecha,
+        nombre: p.nombre,
+        productos: p.productos,
+        talla: p.talla,
+        estado: p.estado,
+        recibo: p.recibo || null,
+      }))
+  );
+});
+
+// ---------- ENDPOINT PARA RECHAZAR COMPROBANTE DESDE LA PÁGINA ----------
+app.get("/pedidos/rechazar", (req, res) => {
+  const id = (req.query.id || "").toUpperCase();
+  const motivo = req.query.motivo;
+  const pedido = PEDIDOS.find((p) => (p.id || "").toUpperCase() === id);
+  if (pedido && ["falso", "no_coincide", "borroso"].includes(motivo) && pedido.numero) {
+    const msg = mensajeRechazoCliente(pedido, motivo);
+    if (msg) {
+      enviarWhatsApp(pedido.numero, msg).catch(() => {});
+    }
+  }
+  res.redirect("/pedidos");
+});
+
 // ---------- ENDPOINT PARA CAMBIAR ESTADO DESDE LA PÁGINA ----------
 app.get("/pedidos/set", (req, res) => {
   const id = (req.query.id || "").toUpperCase();
@@ -684,6 +775,12 @@ app.get("/pedidos", (req, res) => {
             `<a href="/pedidos/set?id=${p.id}&estado=${e}" style="display:inline-block;margin:2px;padding:4px 8px;border:1px solid #2a2a2a;border-radius:6px;font-size:12px;text-decoration:none;color:#fff">${estadoLabel[e]}</a>`
         )
         .join(" ");
+      const rechazos = ["falso", "no_coincide", "borroso"]
+        .map((r) => {
+          const etiqueta = r === "falso" ? "🚫 Falso" : r === "no_coincide" ? "↔️ No coincide" : "🌫️ Borroso";
+          return `<a href="/pedidos/rechazar?id=${p.id}&motivo=${r}" style="display:inline-block;margin:2px;padding:4px 8px;border:1px solid #a33;border-radius:6px;font-size:12px;text-decoration:none;color:#f88">${etiqueta}</a>`;
+        })
+        .join(" ");
       return `<tr>
         <td>${new Date(p.fecha).toLocaleString("es-MX")}</td>
         <td>${(p.id || "").replace(/</g, "&lt;")}</td>
@@ -692,7 +789,7 @@ app.get("/pedidos", (req, res) => {
         <td>${(p.productos || []).join("<br>").replace(/</g, "&lt;")}</td>
         <td>${(p.texto || "").replace(/</g, "&lt;").replace(/\n/g, "<br>")}</td>
         <td>${reciboHtml}</td>
-        <td style="white-space:nowrap">${estadoLabel[p.estado] || p.estado}<br>${botones}</td>
+        <td style="white-space:nowrap">${estadoLabel[p.estado] || p.estado}<br>${botones}<br>${rechazos}</td>
       </tr>`;
     })
     .join("");
