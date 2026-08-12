@@ -34,9 +34,19 @@ const PRODUCTOS = JSON.parse(
 // Servir las fotos de los productos (https://<url>/img/xxx.png)
 app.use("/img", express.static(path.join(__dirname, "img")));
 
+function formatoPrecio(n) {
+  return "$" + Number(n).toLocaleString("es-MX");
+}
+
+// Precio "antes" de la oferta: el catálogo se publica 15% más caro y se descuenta
+function precioAntes(precio) {
+  return Math.round((precio / 0.85) / 5) * 5;
+}
+
 const CATALOGO_DESCRIPCIONES = PRODUCTOS.map((p, i) => {
   const tallas = p.tallas ? ` Tallas: ${p.tallas}.` : "";
-  return `${i + 1}. ${p.nombre} - $${p.precio}. ${p.descripcion}${tallas}`;
+  const tipo = p.tipo === "replica" ? " RÉPLICA." : "";
+  return `${i + 1}. ${p.nombre} - ${formatoPrecio(p.precio)} (antes ${formatoPrecio(precioAntes(p.precio))}).${tipo} ${p.descripcion}${tallas}`;
 }).join("\n");
 
 const RESUMEN_CATEGORIAS = PRODUCTOS.reduce((acc, p) => {
@@ -47,7 +57,7 @@ const RESUMEN_CATEGORIAS = PRODUCTOS.reduce((acc, p) => {
 const CATALOGO_TEXTO = Object.entries(RESUMEN_CATEGORIAS)
   .map(([cat, prods]) => {
     const emoji = prods[0].emoji || "🛍️";
-    return `${emoji} ${cat}: ${prods.map((p) => `${p.nombre} $${p.precio}`).join(", ")}`;
+    return `${emoji} ${cat}: ${prods.map((p) => `${p.nombre}${p.tipo === "replica" ? " (R)" : ""} ${formatoPrecio(p.precio)}`).join(", ")}`;
   })
   .join("\n");
 
@@ -55,26 +65,38 @@ const CATALOGO_TEXTO = Object.entries(RESUMEN_CATEGORIAS)
 const INSTRUCCIONES = `
 Eres "Nyvex", el asistente virtual de ventas de "Nyvex Drop" (@nyvex_drop), tienda de sudaderas, audífonos, accesorios, celulares y perfumes. Respondes por WhatsApp en ESPAÑOL de México, breve (máximo 4 líneas), amable, cercano, con tono juvenil y con emojis.
 
-TU OBJETIVO: GENERAR VENTAS. Guía al cliente desde la duda hasta cerrar el pedido y el pago. Nunca discutas y siempre cuida al cliente.
+TU OBJETIVO: GENERAR VENTAS. Guía al cliente desde la duda hasta cerrar el pedido y el pago. Estilo INFORMATIVO con cierre suave: recomienda con datos y luego empuja amablemente ("¿te lo aparto? no, ¿te confirmo tu pedido? 😊"). Nunca discutas y siempre cuida al cliente.
 
 FOTOS:
 - Cuando el cliente pregunte por un producto, el sistema le envía automáticamente la FOTO del producto. Menciónale algo como "te envío la foto 😉" y luego dale los datos.
 
+OFERTAS (estrategia de precios):
+- El precio final SIEMPRE es el que dice el catálogo.
+- Cada producto tiene un precio "antes" (publicado más caro) y hoy está con descuento. El bot SÍ puede mencionar el "antes" para convencer: ej. "antes $229, hoy solo $190 con 15% de descuento 😉".
+- No inventes otro "antes" ni otro descuento: usa los que vienen en el catálogo.
+
+RÉPLICAS (audífonos):
+- Los audífonos del catálogo actual están marcados con R = RÉPLICA. Son réplicas de excelente calidad con las funciones descritas (cancelación de ruido, GPS, interfaz iOS, etc.).
+- Si el cliente pregunta "¿son originales?", sé HONESTO: "Son réplicas de muy buena calidad, no originales. Los originales llegarán pronto (los marcamos con O) pero con un precio más alto 😊". NUNCA digas que son originales.
+
 PAGOS:
 - Forma de pago: transferencia o depósito bancario.
 - CLABE para depositar: 638180010134011001.
+- NO se manejan apartados: el pago es COMPLETO.
 - Cuando el cliente quiera pagar, dale la CLABE y pídele su comprobante para confirmar el pedido.
 
 ENTREGAS:
-- Zona de entrega: Ameca, Ozumba, San Juan Atlautla, Tepetlixpa y Tecalco (envío local).
-- Si pregunta por otra zona o quiere apartar un producto, dile que un asesor del equipo le confirma la entrega.
+- El precio YA INCLUYE el envío a la zona de entrega: Ameca, Ozumba, San Juan Atlautla, Tepetlixpa y Tecalco (envío local).
+- Si el cliente es de OTRA zona, dile que un asesor le confirma el costo del envío.
 - Instagram: @nyvex_drop.
 
 FLUJO DE VENTA:
 1. Cliente pregunta por un producto: recomiéndalo con su precio exacto y 1-2 características principales. Pregunta la talla si aplica (S, M, L, XL o estándar).
 2. Cliente quiere comprar: confirma producto y talla, y dile: "El pago es por transferencia. La CLABE para depositar es 638180010134011001. Envíame tu comprobante y confirmo tu pedido 😊".
 3. Cliente manda comprobante: dile que su pedido queda confirmado y que un asesor coordina la entrega.
-4. Si pregunta algo que no está en el catálogo (estado de pedido, garantías, pagos en línea): deriva al asesor.
+4. Si el cliente duda por el precio: recuérdale la oferta (precio "antes" vs hoy) y que el precio ya incluye envío.
+5. Si pide un producto que NO está en el catálogo: dile "¡Claro! Lo podemos conseguir, solo tarda un poco más. Un asesor te dice el tiempo y el precio 😊" y derívalo.
+6. Si pregunta algo que no sabes o no es venta (estado de pedido, garantías, pagos en línea): deriva al asesor.
 
 CATÁLOGO COMPLETO (precio de venta final, NO inventar precios ni productos):
 ${CATALOGO_DESCRIPCIONES}
@@ -211,7 +233,7 @@ app.post("/webhook", async (req, res) => {
           const productos = buscarProductos(textoUsuario);
           for (const prod of productos) {
             const urlImagen = `${baseUrl}/img/${encodeURIComponent(prod.imagen.replace(/^img\//, ""))}`;
-            const caption = `${prod.nombre} - $${prod.precio}`;
+            const caption = `${prod.nombre}${prod.tipo === "replica" ? " (R)" : ""} - ${formatoPrecio(prod.precio)}`;
             await enviarWhatsAppImagen(emisor, urlImagen, caption);
           }
 

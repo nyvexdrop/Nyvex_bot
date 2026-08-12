@@ -45,6 +45,7 @@
     "categoria": "audifonos",
     "emoji": "🎧",
     "imagen": "img/airpodspro.png",
+    "tipo": "replica",
     "descripcion": "Auriculares inalámbricos Bluetooth de alta calidad. Sonido lossless, llamadas claras, hasta 24h de música, chip Bluetooth 5.3 mejorado (+80% calidad de sonido). Compatibles con todas las marcas de celulares. Almacén local, sin impuestos de importación. Color: Blanco. Envío local. Sin cancelación de ruido (no tienen ANC).",
     "tallas": "",
     "envio": "local"
@@ -55,7 +56,8 @@
     "categoria": "audifonos",
     "emoji": "🎧",
     "imagen": "img/airpodspreo2.png",
-    "descripcion": "AirPods 2 Pro con cancelación de ruido REAL. Entrada tipo C, aparece la interfaz en iOS como los originales. Carga inalámbrica, incluye cable de carga y tamaños de almohadillas. GPS (emiten sonido para rastrearlos en la app 'Encontrar' de Apple). Certificados Apple. Control táctil en cada AirPod (cambiar canción y pausa). Batería de 6-7 horas. Envío local.",
+    "tipo": "replica",
+    "descripcion": "AirPods 2 Pro con cancelación de ruido REAL. Entrada tipo C, aparece la interfaz en iOS como los originales. Carga inalámbrica, incluye cable de carga y tamaños de almohadillas. GPS (emiten sonido para rastrearlos en la app 'Encontrar' de Apple). Control táctil en cada AirPod (cambiar canción y pausa). Batería de 6-7 horas. Envío local.",
     "tallas": "",
     "envio": "local"
   },
@@ -65,7 +67,8 @@
     "categoria": "audifonos",
     "emoji": "🎧",
     "imagen": "img/airpodspro3.png",
-    "descripcion": "AirPods Pro 3 con cancelación de ruido REAL, 2 veces mejor que la generación anterior. Entrada tipo C, interfaz en iOS como los originales. Carga inalámbrica. Traductor de idiomas en vivo y 100% funcional. Mide el ritmo cardiaco. GPS (emiten sonido para rastrearlos en la app 'Encontrar' de Apple). Certificados Apple. Control táctil en cada AirPod. Incluye tamaños de almohadillas. Batería de 6-7 horas. Envío local.",
+    "tipo": "replica",
+    "descripcion": "AirPods Pro 3 con cancelación de ruido REAL, 2 veces mejor que la generación anterior. Entrada tipo C, interfaz en iOS como los originales. Carga inalámbrica. Traductor de idiomas en vivo y 100% funcional. Mide el ritmo cardiaco. GPS (emiten sonido para rastrearlos en la app 'Encontrar' de Apple). Control táctil en cada AirPod. Incluye tamaños de almohadillas. Batería de 6-7 horas. Envío local.",
     "tallas": "",
     "envio": "local"
   },
@@ -75,7 +78,8 @@
     "categoria": "audifonos",
     "emoji": "🎧",
     "imagen": "img/airpods4.png",
-    "descripcion": "AirPods 4 con cancelación de ruido REAL. Aparece la interfaz en iOS como los originales. Entrada tipo C. GPS (emiten sonido para rastrearlos en la app 'Encontrar' de Apple). Certificados Apple. Control táctil en cada AirPod (cambiar canción y pausa). Duración de batería de 7-8 horas. Envío local.",
+    "tipo": "replica",
+    "descripcion": "AirPods 4 con cancelación de ruido REAL. Aparece la interfaz en iOS como los originales. Entrada tipo C. GPS (emiten sonido para rastrearlos en la app 'Encontrar' de Apple). Control táctil en cada AirPod (cambiar canción y pausa). Duración de batería de 7-8 horas. Envío local.",
     "tallas": "",
     "envio": "local"
   },
@@ -85,7 +89,8 @@
     "categoria": "audifonos",
     "emoji": "🎧",
     "imagen": "img/audifonosdiadema.png",
-    "descripcion": "AirPods Max, audífonos de diadema con cancelación de ruido REAL. Aparece la interfaz en iOS como los originales. Entrada tipo C, carga rápida. GPS (emiten sonido para rastrearlos en la app 'Encontrar' de Apple). Certificados Apple. Control táctil para cambiar canción y pausar. Cómodos para uso prolongado. Envío local.",
+    "tipo": "replica",
+    "descripcion": "AirPods Max, audífonos de diadema con cancelación de ruido REAL. Aparece la interfaz en iOS como los originales. Entrada tipo C, carga rápida. GPS (emiten sonido para rastrearlos en la app 'Encontrar' de Apple). Control táctil para cambiar canción y pausar. Cómodos para uso prolongado. Envío local.",
     "tallas": "",
     "envio": "local"
   },
