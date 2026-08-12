@@ -16,6 +16,8 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "nyvex-verify-2026";
 const BOT_PHONE_NUMBER = process.env.BOT_PHONE_NUMBER || "";
+// Número del dueño al que se le avisa cuando hay un pedido/compra
+const OWNER_PHONE = process.env.OWNER_PHONE || BOT_PHONE_NUMBER || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 // Modelos de respaldo: si el principal falla (cambio de modelos de Google), usa otro
 const MODELOS_GEMINI = [
@@ -30,6 +32,15 @@ const PORT = process.env.PORT || 3000;
 const PRODUCTOS = JSON.parse(
   fs.readFileSync(path.join(__dirname, "productos.json"), "utf8")
 );
+
+// ---------- PEDIDOS (historial de ventas / intereses) ----------
+const PEDIDOS_PATH = path.join(__dirname, "pedidos.json");
+let PEDIDOS = [];
+try {
+  PEDIDOS = JSON.parse(fs.readFileSync(PEDIDOS_PATH, "utf8"));
+} catch (e) {
+  PEDIDOS = [];
+}
 
 // Servir las fotos de los productos (https://<url>/img/xxx.png)
 app.use("/img", express.static(path.join(__dirname, "img")));
@@ -92,8 +103,8 @@ ENTREGAS:
 
 FLUJO DE VENTA:
 1. Cliente pregunta por un producto: recomiéndalo con su precio exacto y 1-2 características principales. Pregunta la talla si aplica (S, M, L, XL o estándar).
-2. Cliente quiere comprar: confirma producto y talla, y dile: "El pago es por transferencia. La CLABE para depositar es 638180010134011001. Envíame tu comprobante y confirmo tu pedido 😊".
-3. Cliente manda comprobante: dile que su pedido queda confirmado y que un asesor coordina la entrega.
+2. Cliente quiere comprar: confirma producto y talla, pregúntale su NOMBRE ("¿Me confirmas tu nombre para tu pedido? 😊") y luego dile: "El pago es por transferencia. La CLABE para depositar es 638180010134011001. Envíame tu comprobante y confirmo tu pedido 😊".
+3. Cliente manda comprobante: dile que su pedido queda confirmado y que un asesor coordina la entrega. El sistema guarda el pedido y avisa al equipo automáticamente.
 4. Si el cliente duda por el precio: recuérdale la oferta (precio "antes" vs hoy) y que el precio ya incluye envío.
 5. Si pide un producto que NO está en el catálogo: dile "¡Claro! Lo podemos conseguir, solo tarda un poco más. Un asesor te dice el tiempo y el precio 😊" y derívalo.
 6. Si pregunta algo que no sabes o no es venta (estado de pedido, garantías, pagos en línea): deriva al asesor.
@@ -210,6 +221,12 @@ app.post("/webhook", async (req, res) => {
         if (change.field !== "messages") continue;
         const value = change.value;
 
+        // Nombre del cliente que manda Meta (si lo da)
+        const nombreCliente =
+          value.contacts && value.contacts[0] && value.contacts[0].profile
+            ? value.contacts[0].profile.name
+            : "";
+
         // No contestar mensajes que envía el propio negocio
         for (const msg of value.messages || []) {
           const emisor = msg.from;
@@ -236,6 +253,21 @@ app.post("/webhook", async (req, res) => {
             const urlImagen = `${baseUrl}/img/${encodeURIComponent(prod.imagen.replace(/^img\//, ""))}`;
             const caption = `${prod.nombre}${prod.tipo === "replica" ? " (R)" : ""} - ${formatoPrecio(prod.precio)}`;
             await enviarWhatsAppImagen(emisor, urlImagen, caption);
+          }
+
+          // Detectar intención de compra o comprobante (foto/doc) → registrar pedido
+          const mNorm = normalizar(textoUsuario);
+          const esInteresCompra =
+            /compr|pedir|pedido|pagar|pago|pague|pagaste|deposit|transfer|comprobante|me lo llevo|apart|clabe|efectivo|tarjeta|me interesa/.test(mNorm);
+          const esComprobante = msg.type === "image" || msg.type === "document" || msg.type === "video";
+
+          if (esInteresCompra || esComprobante) {
+            await registrarPedido({
+              numero: emisor,
+              nombre: nombreCliente,
+              texto: textoUsuario,
+              productos,
+            });
           }
 
           const respuesta = await generarRespuesta(textoUsuario);
@@ -330,6 +362,43 @@ async function enviarWhatsAppImagen(para, urlImagen, caption) {
   console.log("🖼️ Respuesta imagen:", res.status, respuesta.slice(0, 200));
 }
 
+// ---------- REGISTRAR PEDIDO (avisa al dueño y guarda historial) ----------
+async function registrarPedido({ numero, nombre, texto, productos }) {
+  const pedido = {
+    fecha: new Date().toISOString(),
+    numero: numero || "",
+    nombre: nombre || "Sin nombre",
+    texto: texto || "",
+    productos: (productos || []).map((p) => `${p.nombre} - $${p.precio}`),
+  };
+
+  PEDIDOS.push(pedido);
+  try {
+    fs.writeFileSync(PEDIDOS_PATH, JSON.stringify(PEDIDOS, null, 2));
+  } catch (e) {
+    console.error("Error guardando pedido:", e.message);
+  }
+
+  console.log("🛒 Pedido registrado:", pedido.nombre, pedido.numero, pedido.productos.join(", "));
+
+  if (OWNER_PHONE) {
+    const resumen = [
+      "🛒 *NUEVO PEDIDO / INTERÉS*",
+      `👤 Cliente: ${pedido.nombre}`,
+      `📱 Número: ${pedido.numero}`,
+      pedido.productos.length ? `📦 Producto: ${pedido.productos.join(", ")}` : "",
+      `💬 Mensaje: ${pedido.texto}`,
+      `🕒 ${new Date().toLocaleString("es-MX")}`,
+    ].filter(Boolean).join("\n");
+
+    try {
+      await enviarWhatsApp(OWNER_PHONE, resumen);
+    } catch (e) {
+      console.error("Error avisando al dueño:", e.message);
+    }
+  }
+}
+
 // ---------- RUTA PRINCIPAL (para revisar que esté vivo) ----------
 app.get("/", (req, res) => {
   res.send("🤖 Nyvex Drop Bot activo");
@@ -338,6 +407,39 @@ app.get("/", (req, res) => {
 // ---------- ENDPOINT PARA VER EL CATÁLOGO (prueba) ----------
 app.get("/catalogo", (req, res) => {
   res.type("text/plain; charset=utf-8").send(`Catálogo Nyvex Drop:\n${CATALOGO_TEXTO}`);
+});
+
+// ---------- ENDPOINT PARA VER LOS PEDIDOS ----------
+app.get("/pedidos", (req, res) => {
+  const filas = PEDIDOS.slice()
+    .reverse()
+    .map((p) => {
+      return `<tr>
+        <td>${new Date(p.fecha).toLocaleString("es-MX")}</td>
+        <td>${(p.nombre || "").replace(/</g, "&lt;")}</td>
+        <td>${(p.numero || "").replace(/</g, "&lt;")}</td>
+        <td>${(p.productos || []).join("<br>").replace(/</g, "&lt;")}</td>
+        <td>${(p.texto || "").replace(/</g, "&lt;").replace(/\n/g, "<br>")}</td>
+      </tr>`;
+    })
+    .join("");
+
+  res.send(`<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pedidos Nyvex</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0a0a0a;color:#fff;padding:20px}
+h1{color:#fff}table{width:100%;border-collapse:collapse;margin-top:15px}
+th,td{border:1px solid #2a2a2a;padding:10px;text-align:left;font-size:14px}
+th{background:#1a1a1a}td{background:#111}
+</style></head><body>
+<h1>🛒 Pedidos e intereses de Nyvex Drop</h1>
+<table>
+<thead><tr><th>Fecha</th><th>Cliente</th><th>Número</th><th>Producto</th><th>Mensaje</th></tr></thead>
+<tbody>${filas || "<tr><td colspan='5'>Sin pedidos aún</td></tr>"}</tbody>
+</table>
+</body></html>`);
 });
 
 app.listen(PORT, () => {
