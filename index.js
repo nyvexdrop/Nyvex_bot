@@ -93,6 +93,8 @@ app.post("/webhook", async (req, res) => {
     const body = req.body;
     if (!body.entry) return;
 
+    console.log("📥 Webhook recibido de Meta:", JSON.stringify(body).slice(0, 500));
+
     for (const entry of body.entry) {
       for (const change of entry.changes || []) {
         if (change.field !== "messages") continue;
@@ -101,7 +103,11 @@ app.post("/webhook", async (req, res) => {
         // No contestar mensajes que envía el propio negocio
         for (const msg of value.messages || []) {
           const emisor = msg.from;
-          if (BOT_PHONE_NUMBER && emisor === BOT_PHONE_NUMBER) continue;
+          console.log("💬 Mensaje de", emisor, "tipo:", msg.type);
+          if (BOT_PHONE_NUMBER && emisor === BOT_PHONE_NUMBER) {
+            console.log("🚫 Ignorado (número del negocio)");
+            continue;
+          }
 
           let textoUsuario = "";
           if (msg.type === "text") {
@@ -163,7 +169,7 @@ async function generarRespuesta(mensaje) {
 async function enviarWhatsApp(para, texto) {
   const url = `https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`;
 
-  await fetch(url, {
+  const res = await fetch(url, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${WHATSAPP_TOKEN}`,
@@ -177,6 +183,9 @@ async function enviarWhatsApp(para, texto) {
       text: { body: texto }
     })
   });
+
+  const respuesta = await res.text();
+  console.log("📤 Respuesta de WhatsApp API:", res.status, respuesta.slice(0, 300));
 }
 
 // ---------- RUTA PRINCIPAL (para revisar que esté vivo) ----------
