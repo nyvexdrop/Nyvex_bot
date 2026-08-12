@@ -647,6 +647,11 @@ app.get("/catalogo", (req, res) => {
   res.type("text/plain; charset=utf-8").send(`Catálogo Nyvex Drop:\n${CATALOGO_TEXTO}`);
 });
 
+// La tienda web carga el catálogo desde aquí (una sola fuente: productos.json)
+app.get("/productos.json", (req, res) => {
+  res.json(PRODUCTOS);
+});
+
 // ---------- DIAGNÓSTICO DE CONFIGURACIÓN (no muestra valores secretos) ----------
 app.get("/config", (req, res) => {
   res.json({

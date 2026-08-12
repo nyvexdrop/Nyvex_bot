@@ -259,6 +259,7 @@ grid.addEventListener("click", (e) => {
 
 // ---------- Rastrear pedido ----------
 const rastrearForm = document.getElementById("rastrearForm");
+const rastrearInput = document.getElementById("rastrearInput");
 const rastrearResultado = document.getElementById("rastrearResultado");
 
 function estadoInfo(e) {
