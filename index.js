@@ -324,13 +324,18 @@ function mensajeEstadoCliente(pedido) {
 
 // ---------- COMANDOS DEL DUEÑO ----------
 // "confirmar ABC123", "enviando ABC123", "entregado ABC123" (el ID es opcional si solo hay uno pendiente)
+// Rechazo de comprobante: "falso ABC123", "no coincide ABC123", "borroso ABC123" → le avisan al cliente y le piden reenviarlo
 async function procesoComandoOwner(texto) {
   const m = normalizar(texto);
   let accion = null;
+  let rechazo = null;
   if (/confirm|listo|si cayo|ya cayo|pago recibido/.test(m)) accion = "confirmado";
   else if (/enviando|en camino|salio/.test(m)) accion = "enviando";
   else if (/entregad/.test(m)) accion = "entregado";
-  if (!accion) return null;
+  else if (/falso|falsa|no valido|no es valido|falsificad/.test(m)) rechazo = "falso";
+  else if (/no coincide|no cuadra|no corresponde|no es el suyo/.test(m)) rechazo = "no_coincide";
+  else if (/borroso|borrosa|no se lee|ilegible|mala calidad|no alcanzo/.test(m)) rechazo = "borroso";
+  if (!accion && !rechazo) return null;
 
   const idMatch = m.match(/\b([a-z0-9]{6})\b/);
   let pedido = idMatch ? PEDIDOS.find((p) => p.id.toLowerCase() === idMatch[1]) : null;
@@ -340,6 +345,17 @@ async function procesoComandoOwner(texto) {
     )[0];
   }
   if (!pedido) return "No hay pedidos pendientes para actualizar.";
+
+  if (rechazo) {
+    const mensajes = {
+      falso: `Hola *${pedido.nombre || "cliente"}* 😕 Revisamos tu comprobante y no pudimos validarlo. ¿Puedes reenviarlo, por favor? Si tienes dudas, un asesor te ayuda por aquí a confirmar tu pedido *${pedido.id}*.`,
+      no_coincide: `Hola *${pedido.nombre || "cliente"}* 😕 El comprobante que enviaste no coincide con los datos de tu pedido *${pedido.id}*. ¿Nos reenvías el comprobante correcto, por favor?`,
+      borroso: `Hola *${pedido.nombre || "cliente"}* 🙏 Tu comprobante se ve borroso y no lo alcanzamos a leer bien. ¿Puedes subirlo de nuevo con mejor calidad? Así confirmamos tu pedido al momento.`,
+    };
+    await enviarWhatsApp(pedido.numero, mensajes[rechazo]);
+    const motivo = rechazo === "falso" ? "falso" : rechazo === "no_coincide" ? "que no coincide" : "borroso";
+    return `⚠️ Le avisaste a *${pedido.nombre || "cliente"}* que su comprobante (*${pedido.id}*) se ve *${motivo}* y le pediste reenviarlo.`;
+  }
 
   pedido.estado = accion;
   guardarPedidos();
