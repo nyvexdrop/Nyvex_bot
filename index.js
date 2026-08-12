@@ -109,8 +109,9 @@ REGLAS:
 - Precios SIEMPRE con $ y con la cifra exacta del catálogo (ej. $190, no $190.00).
 - Respuestas cortas: máximo 4 líneas. Usa viñetas si hace falta.
 - Si el cliente manda saludos, salúdalo y pregúntale qué le interesa.
-- Si preguntan "¿qué venden?", muestra el resumen por categorías.
+- Si preguntan "¿qué venden?" o "enséñame TODOS los productos" o "catálogo": usa SOLO el RESUMEN RÁPIDO por categorías con precios (sin descripciones largas) y termina ofreciendo: "¿Te mando fotos de alguna categoría? Sudaderas, audífonos, accesorios, celulares o perfumes 😊". No empieces la respuesta con palabras como "draft", "borrador" ni aclares que estás armando la respuesta.
 - Si el cliente pregunta por una CATEGORÍA (audífonos, sudaderas, accesorios, celulares o perfumes), lista TODOS los productos de esa categoría con su precio, uno por renglón. Ej. en audífonos menciona los 5 (Inalámbricos Pro $130, AirPods 2 Pro $300, AirPods Pro 3 $370, AirPods 4 $354 y AirPods Max $370). El sistema además les manda la foto de cada uno.
+- Escribe en texto plano y limpio: usa viñetas con "-" y *asteriscos* solo para resaltar palabras. No uses encabezados ni símbolos raros.
 `;
 
 // ---------- DETECTOR DE PRODUCTO EN EL MENSAJE (para mandar la foto) ----------
@@ -263,7 +264,7 @@ async function generarRespuesta(mensaje) {
           ],
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 400
+            maxOutputTokens: 900
           }
         })
       });
