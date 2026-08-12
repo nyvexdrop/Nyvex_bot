@@ -13,7 +13,14 @@ const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "nyvex-verify-2026";
 const BOT_PHONE_NUMBER = process.env.BOT_PHONE_NUMBER || "";
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
+// Modelos de respaldo: si el principal falla (cambio de modelos de Google), usa otro
+const MODELOS_GEMINI = [
+  GEMINI_MODEL,
+  "gemini-3.6-flash",
+  "gemini-3.5-flash",
+  "gemini-flash-latest",
+];
 const PORT = process.env.PORT || 3000;
 
 // ---------- CONOCIMIENTO DE NYVEX DROP ----------
@@ -132,37 +139,38 @@ app.post("/webhook", async (req, res) => {
 
 // ---------- INTELIGENCIA (Gemini gratis) ----------
 async function generarRespuesta(mensaje) {
-  try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY}`;
+  for (const modelo of MODELOS_GEMINI) {
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${GEMINI_KEY}`;
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        system_instruction: { parts: [{ text: INSTRUCCIONES }] },
-        contents: [
-          { role: "user", parts: [{ text: mensaje }] }
-        ],
-        generationConfig: {
-          temperature: 0.7,
-          maxOutputTokens: 300
-        }
-      })
-    });
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: INSTRUCCIONES }] },
+          contents: [
+            { role: "user", parts: [{ text: mensaje }] }
+          ],
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 300
+          }
+        })
+      });
 
-    const data = await res.json();
-    const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      const data = await res.json();
+      const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
-    if (texto) return texto.trim();
+      if (texto) return texto.trim();
 
-    if (data?.error) {
-      console.error("Error Gemini:", data.error.message);
+      if (data?.error) {
+        console.error(`Error Gemini (${modelo}):`, data.error.message);
+      }
+    } catch (error) {
+      console.error(`Error en Gemini (${modelo}):`, error.message);
     }
-    return "Disculpa, por el momento no puedo responder. El equipo de Nyvex te atiende al instante 👋";
-  } catch (error) {
-    console.error("Error en Gemini:", error.message);
-    return "Disculpa, tuve un problema técnico. El equipo de Nyvex te atiende en breve 👋";
   }
+  return "Disculpa, por el momento no puedo responder. El equipo de Nyvex te atiende al instante 👋";
 }
 
 // ---------- ENVIAR MENSAJE POR WHATSAPP ----------
