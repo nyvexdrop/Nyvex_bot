@@ -88,6 +88,7 @@ REGLAS:
 - Respuestas cortas: máximo 4 líneas. Usa viñetas si hace falta.
 - Si el cliente manda saludos, salúdalo y pregúntale qué le interesa.
 - Si preguntan "¿qué venden?", muestra el resumen por categorías.
+- Si el cliente pregunta por una CATEGORÍA (audífonos, sudaderas, accesorios, celulares o perfumes), lista TODOS los productos de esa categoría con su precio, uno por renglón. Ej. en audífonos menciona los 5 (Inalámbricos Pro $130, AirPods 2 Pro $300, AirPods Pro 3 $370, AirPods 4 $354 y AirPods Max $370). El sistema además les manda la foto de cada uno.
 `;
 
 // ---------- DETECTOR DE PRODUCTO EN EL MENSAJE (para mandar la foto) ----------
@@ -106,7 +107,7 @@ const CLAVES_PRODUCTO = [
   { nombre: "AirPods Pro 3 Traducción Real", palabras: ["pro 3", "traduccion", "traductor"] },
   { nombre: "AirPods 2 Pro con Cancelación", palabras: ["airpods 2", "2 pro", "pro 2"] },
   { nombre: "AirPods 4", palabras: ["airpods 4"] },
-  { nombre: "Auriculares Inalámbricos Pro", palabras: ["inalambricos pro", "inalambrico pro", "auriculares pro", "auricular pro", "audifonos pro", "audifono pro", "earbuds", "auriculares", "audifonos"] },
+  { nombre: "Auriculares Inalámbricos Pro", palabras: ["inalambricos pro", "inalambrico pro", "inalambricos", "inalambrico", "auriculares pro", "auricular pro", "audifonos pro", "audifono pro", "earbuds"] },
   { nombre: "Capucha Dragón para Hombre", palabras: ["capucha dragon", "dragon"] },
   { nombre: "Camiseta Flow para Hombre", palabras: ["camiseta flow", "flow"] },
   { nombre: "Sudadera Katana Japonesa para Hombre", palabras: ["katana", "japonesa"] },
@@ -137,8 +138,7 @@ function buscarProductos(mensaje) {
     resultados.push(...PRODUCTOS.filter((p) => p.categoria === "sudaderas"));
   }
   if (/\b(airpods|audifono|audifonos|auricular|auriculares|bluetooth)\b/.test(m)) {
-    const def = PRODUCTOS.find((p) => p.nombre.includes("2 Pro"));
-    if (def) resultados.push(def);
+    resultados.push(...PRODUCTOS.filter((p) => p.categoria === "audifonos"));
   }
   if (/\b(magsafe|bateria|baterias)\b/.test(m)) {
     resultados.push(...PRODUCTOS.filter((p) => p.categoria === "accesorios" && p.nombre.includes("MagSafe")));
