@@ -755,7 +755,7 @@ app.get("/modelos", (req, res) => {
 
 // ---------- ADMIN (app móvil para administrar pedidos) ----------
 // Protegida con contraseña: /admin?pass=... (usa ADMIN_PASSWORD o el token de verificación)
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || VERIFY_TOKEN || "nyvex-admin";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "kromastore";
 
 function esAdmin(req) {
   return req.query.pass === ADMIN_PASSWORD;
@@ -828,6 +828,13 @@ var ultimoTotal = 0;
 
 function beep(){try{var c=new (window.AudioContext||window.webkitAudioContext)();var o=c.createOscillator();var g=c.createGain();o.connect(g);g.connect(c.destination);o.frequency.value=880;g.gain.value=0.08;o.start();setTimeout(function(){o.stop();c.close();},350);}catch(e){}}
 
+function notificar(nombre,id){
+  if("Notification" in window && Notification.permission==="granted"){
+    try{new Notification("🛒 Nuevo pedido "+id,{body:nombre||"Llego un pedido",icon:"/img/logo.jpeg"});}catch(e){}
+  }
+  if(navigator.vibrate){try{navigator.vibrate([250,120,250]);}catch(e){}}
+}
+
 function fmtFecha(iso){var d=new Date(iso);return d.toLocaleString("es-MX",{dateStyle:"short",timeStyle:"short"});}
 
 function botones(p){
@@ -854,7 +861,10 @@ function card(p){
 function cargar(){
   fetch("/api/admin/pedidos?pass="+PASS).then(function(r){return r.json();}).then(function(data){
     if(!Array.isArray(data)){document.getElementById("lista").innerHTML='<p class="vacio">Sin acceso. <a href="/admin">Volver a entrar</a></p>';return;}
-    if(ultimoTotal>0 && data.length>ultimoTotal) beep();
+    if(ultimoTotal>0 && data.length>ultimoTotal){
+      beep();
+      if(data.length>0) notificar(data[0].nombre, data[0].id);
+    }
     ultimoTotal=data.length;
     document.getElementById("lista").innerHTML = data.length
       ? data.map(card).join("")
@@ -875,7 +885,8 @@ document.getElementById("recargar").addEventListener("click",function(e){e.preve
 cargar();
 setInterval(cargar,15000);
 </script>
-<script>if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js").catch(function(){});}</script>
+<script>if("Notification" in window && Notification.permission==="default"){Notification.requestPermission();}
+if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js").catch(function(){});}</script>
 </body></html>`;
 
 app.get("/admin", (req, res) => {
