@@ -124,7 +124,7 @@ app.get("/recibos/:archivo", (req, res) => {
   if (RECIBOS_MEM[archivo]) {
     const buf = Buffer.from(RECIBOS_MEM[archivo], "base64");
     const ext = (archivo.split(".").pop() || "").toLowerCase();
-    const tipos = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
+    const tipos = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp", mp4: "video/mp4", mov: "video/quicktime", "3gp": "video/3gpp" };
     res.setHeader("Content-Type", tipos[ext] || "application/octet-stream");
     return res.send(buf);
   }
@@ -191,6 +191,15 @@ async function conectarBaseDeDatos() {
       endpoint TEXT PRIMARY KEY,
       datos JSONB
     )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS clientes (
+      numero TEXT PRIMARY KEY,
+      nombre TEXT
+    )`);
+    const cliRes = await pool.query("SELECT numero, nombre FROM clientes");
+    for (const c of cliRes.rows) {
+      if (c.numero && c.nombre) CLIENTES.set(c.numero, c.nombre);
+    }
+    console.log("👤 Nombres de clientes cargados:", CLIENTES.size);
     await configurarPush();
     const res = await pool.query("SELECT * FROM pedidos");
     if (res.rows.length > 0) {
@@ -465,11 +474,29 @@ function buscarProductos(mensaje) {
 
 // ---------- MEMORIA DE CONVERSACIÓN POR CLIENTE ----------
 const chats = new Map();
+// Nombres de clientes guardados por número (persistidos en la BD para no perderlos al reiniciar)
+const CLIENTES = new Map();
 function getChat(numero) {
   if (!chats.has(numero)) {
     chats.set(numero, { historial: [], pedidoId: null });
   }
   return chats.get(numero);
+}
+
+async function guardarNombreCliente(numero, nombre) {
+  if (!numero || !nombre) return;
+  CLIENTES.set(numero, nombre);
+  if (pool) {
+    try {
+      await pool.query(
+        `INSERT INTO clientes (numero, nombre) VALUES ($1, $2)
+         ON CONFLICT (numero) DO UPDATE SET nombre = EXCLUDED.nombre`,
+        [numero, nombre]
+      );
+    } catch (e) {
+      console.error("⚠️ Error guardando nombre de cliente:", e.message);
+    }
+  }
 }
 
 function agregarHistorial(numero, rol, texto) {
@@ -517,12 +544,24 @@ function extraerNombre(texto) {
   let n = m.match(/mi nombre es\s+([a-z]+(?:\s+[a-z]+)?)/);
   if (n) captura = n[1];
   else {
-    n = m.match(/me llamo\s+([a-z]+(?:\s+[a-z]+)?)/);
+    n = m.match(/(?:me llamo|me llamaba)\s+([a-z]+(?:\s+[a-z]+)?)/);
     if (n) captura = n[1];
     else {
       n = m.match(/soy\s+([a-z]+)/);
       if (n) captura = n[1];
     }
+  }
+  if (!captura) {
+    // Si el cliente responde solo su nombre (ej. "Pablo"), capturarlo
+    const original = (texto || "").trim();
+    const palabras = m.split(/\s+/).filter(Boolean);
+    const saludos = new Set(["hola", "buenas", "buenos", "dias", "tardes", "noches", "que", "cual", "cuanto", "cuantas", "quiero", "comprar", "compro", "pedido", "precio", "talla", "tallas", "gracias", "ok", "okey", "si", "no", "jaja", "ey", "oye", "mira", "listo", "perfecto", "saludos", "buen", "dia", "buena", "una", "un", "una", "el", "la", "los", "las", "mi", "me", "por", "para", "con", "de", "del", "y", "es", "a", "al"]);
+    const pareceNombre =
+      palabras.length >= 1 &&
+      palabras.length <= 2 &&
+      palabras.every((w) => !saludos.has(w)) &&
+      /^[A-ZÁÉÍÓÚÑ]/.test(original); // el nombre va con mayúscula inicial
+    if (pareceNombre) captura = palabras.join(" ");
   }
   if (!captura) return "";
   const partes = captura.split(/\s+/).filter((w) => !basura.has(w));
@@ -552,7 +591,10 @@ async function descargarMedia(mediaId) {
     const ext =
       (data.mime_type || "").includes("png") ? "png" :
       (data.mime_type || "").includes("webp") ? "webp" :
-      (data.mime_type || "").includes("jpeg") || (data.mime_type || "").includes("jpg") ? "jpg" : "bin";
+      (data.mime_type || "").includes("jpeg") || (data.mime_type || "").includes("jpg") ? "jpg" :
+      (data.mime_type || "").includes("mp4") ? "mp4" :
+      (data.mime_type || "").includes("quicktime") ? "mov" :
+      (data.mime_type || "").includes("3gp") ? "3gp" : "bin";
     return { buffer, ext };
   } catch (e) {
     console.error("Error descargando media:", e.message);
@@ -687,6 +729,8 @@ app.post("/webhook", async (req, res) => {
             textoUsuario = "[cliente envió una imagen]";
           } else if (msg.type === "document") {
             textoUsuario = "[cliente envió un documento]";
+          } else if (msg.type === "video") {
+            textoUsuario = "[cliente envió un video]";
           } else {
             textoUsuario = "[cliente envió otro archivo]";
           }
@@ -710,9 +754,27 @@ app.post("/webhook", async (req, res) => {
           const nombreEnMensaje = extraerNombre(textoUsuario);
           if (nombreEnMensaje) {
             chat.nombreCliente = nombreEnMensaje[0].toUpperCase() + nombreEnMensaje.slice(1);
+            await guardarNombreCliente(emisor, chat.nombreCliente);
             const abierto = pedidoActivo(emisor);
             if (abierto && abierto.nombre !== chat.nombreCliente) {
               abierto.nombre = chat.nombreCliente;
+              if (!abierto.perfil && nombreCliente) abierto.perfil = nombreCliente;
+              guardarPedidos();
+            }
+            // Aunque no haya pedido pendiente, actualizar el nombre en el pedido más reciente del cliente
+            const ultimo = pedidosDe(emisor)[0];
+            if (!abierto && ultimo && ultimo.nombre !== chat.nombreCliente) {
+              ultimo.nombre = chat.nombreCliente;
+              guardarPedidos();
+            }
+          }
+          // Si no dijo su nombre en el mensaje pero Meta manda el del perfil, usarlo como nombre
+          else if (!chat.nombreCliente && nombreCliente) {
+            chat.nombreCliente = nombreCliente;
+            await guardarNombreCliente(emisor, chat.nombreCliente);
+            const abierto = pedidoActivo(emisor);
+            if (abierto && (!abierto.nombre || abierto.nombre === "Sin nombre") && abierto.nombre !== nombreCliente) {
+              abierto.nombre = nombreCliente;
               guardarPedidos();
             }
           }
@@ -753,7 +815,7 @@ app.post("/webhook", async (req, res) => {
           if (esCompra || esComprobante) {
             let pedido = pedidoActivo(emisor);
             if (!pedido) {
-              pedido = crearPedido(emisor, chat.nombreCliente || "", productos, textoUsuario, nombreCliente);
+              pedido = crearPedido(emisor, chat.nombreCliente || CLIENTES.get(emisor) || "", productos, textoUsuario, nombreCliente);
               chat.pedidoId = pedido.id;
               const clienteRef = pedido.nombre === "Sin nombre" && pedido.perfil ? `${pedido.nombre} (perfil: ${pedido.perfil})` : pedido.nombre;
               await notificarOwner(
@@ -781,9 +843,9 @@ app.post("/webhook", async (req, res) => {
               guardarPedidos();
             }
 
-            // Comprobante (foto/doc) → descargarlo y adjuntarlo al pedido
-            if (esComprobante && (msg.image || msg.document)) {
-              const mediaId = (msg.image && msg.image.id) || (msg.document && msg.document.id);
+            // Comprobante (foto/doc/video) → descargarlo y adjuntarlo al pedido
+            if (esComprobante && (msg.image || msg.document || msg.video)) {
+              const mediaId = (msg.image && msg.image.id) || (msg.document && msg.document.id) || (msg.video && msg.video.id);
               if (mediaId) {
                 const media = await descargarMedia(mediaId);
                 if (media) {
@@ -794,7 +856,7 @@ app.post("/webhook", async (req, res) => {
                   RECIBOS_MEM[archivo] = pedido.recibo_b64;
                   guardarPedidos();
                   await notificarOwner(
-                    `📎 *COMPROBANTE RECIBIDO*\nPedido: *${pedido.id}* — Cliente: ${pedido.nombre} (${pedido.numero})\nProducto: ${(pedido.productos || []).join(", ") || "-"}\n📷 Foto: ${baseUrl}/${pedido.recibo}\n📋 Pedidos: ${baseUrl}/pedidos\n➡️ Verifica el pago y responde: *"confirmar ${pedido.id}"*`
+                    `📎 *COMPROBANTE RECIBIDO*\nPedido: *${pedido.id}* — Cliente: ${pedido.nombre} (${pedido.numero})\nProducto: ${(pedido.productos || []).join(", ") || "-"}\n📎 Comprobante: ${baseUrl}/${pedido.recibo}\n📋 Pedidos: ${baseUrl}/pedidos\n➡️ Verifica el pago y responde: *"confirmar ${pedido.id}"*`
                   );
                   const reply = "¡Gracias! 🙏 Analizaremos los datos de tu compra y te confirmamos en un momento.";
                   await enviarWhatsApp(emisor, reply);
@@ -1077,7 +1139,7 @@ function botones(p){
 function card(p){
   var est=ESTADOS[p.estado]||["❓ "+p.estado,"b-pendiente"];
   var prods=(p.productos||[]).map(function(x){return "<li>"+x+"</li>";}).join("");
-  var recibo=p.recibo?'<a class="recibo" href="/'+p.recibo+'" target="_blank"><img src="/'+p.recibo+'" alt="comprobante"><span>Ver comprobante</span></a>':"";
+  var recibo=p.recibo?(/\.(mp4|mov|3gp|webm)$/i.test(p.recibo)?'<div class="recibo"><video src="/'+p.recibo+'" controls preload="metadata" style="width:100%;max-width:280px;border-radius:8px;border:1px solid #2a2a2a;background:#000"></video><a href="/'+p.recibo+'" target="_blank"><span>Ver video completo</span></a></div>':'<a class="recibo" href="/'+p.recibo+'" target="_blank"><img src="/'+p.recibo+'" alt="comprobante"><span>Ver comprobante</span></a>'):"";
   var num=p.numero?'<b>📱 '+p.numero+'</b> <a href="https://wa.me/'+p.numero+'" style="color:#7fb2ff">(abrir chat)</a>':"<b>📱 sin número</b>";
   var perfilH=(p.perfil && p.nombre==="Sin nombre")?' <span style="color:#888">(perfil: '+p.perfil.replace(/</g,"&lt;")+')</span>':"";
   return '<div class="pedido'+(p.nuevo?" nuevo":"")+'">'+
@@ -1305,7 +1367,7 @@ app.post("/api/pedido", async (req, res) => {
       id: Math.random().toString(36).slice(2, 8).toUpperCase(),
       fecha: new Date().toISOString(),
       numero: num ? "52" + num : "",
-      nombre: (nombre || "Sin nombre").trim().slice(0, 60),
+      nombre: ((nombre || "").trim().slice(0, 60) || CLIENTES.get("52" + num) || "Sin nombre"),
       productos: prod ? [`${prod.nombre} - ${formatoPrecio(prod.precio)}`] : [(producto || "").trim()],
       talla: talla || "",
       texto: "🛒 Pedido desde la página web",
@@ -1401,7 +1463,9 @@ app.get("/pedidos", (req, res) => {
     .reverse()
     .map((p) => {
       const reciboHtml = p.recibo
-        ? `<a href="/${p.recibo}" target="_blank"><img src="/${p.recibo}" style="max-width:90px;border-radius:6px" alt="comprobante"></a>`
+        ? /\.(mp4|mov|3gp|webm)$/i.test(p.recibo)
+          ? `<a href="/${p.recibo}" target="_blank"><video src="/${p.recibo}" controls preload="metadata" style="max-width:160px;border-radius:6px;background:#000"></video></a>`
+          : `<a href="/${p.recibo}" target="_blank"><img src="/${p.recibo}" style="max-width:90px;border-radius:6px" alt="comprobante"></a>`
         : "—";
       const botones = ["confirmado", "enviando", "entregado"]
         .map(
