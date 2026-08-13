@@ -64,10 +64,11 @@ Después avisarme que espere ~2 min y que Render se actualiza solo.
 - Después: commit + push.
 
 ## DATOS CLAVE DEL NEGOCIO
-- CLABE para depósitos: 638180010134011001.
-- Zonas de entrega: Ameca, Ozumba, San Juan Atlautla, Tepetlixpa y Tecalco.
+- CLABE para depósitos: 638180010134011001 (solo darla cuando el cliente confirme que pagará por transferencia).
+- Zonas de entrega (ZONA A, entrega personal): Tecalco, Atlautla, Ozumba y Tepetlixpa → pago 100% transferencia O 50% de anticipo + 50% en efectivo/transferencia al recibir.
+- ZONA B (Ameca y demás municipios lejanos o envíos): solo 100% transferencia previa al envío.
 - Instagram: @nyvex_drop.
-- Forma de pago: transferencia/depósito; el cliente manda comprobante para confirmar.
+- Regla de atención: no presionar con el pago ni repetir la CLABE en cada mensaje; esperar a que el cliente elija método de pago antes de dar datos bancarios.
 
 ## REGLAS PARA EL ASISTENTE
 - No mostrar ni subir `.env` ni claves.
