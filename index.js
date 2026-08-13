@@ -140,6 +140,7 @@ function pedidoDesdeFila(fila) {
     fecha: fila.fecha,
     numero: fila.numero || "",
     nombre: fila.nombre || "Sin nombre",
+    perfil: fila.perfil || "",
     productos: fila.productos || [],
     talla: fila.talla || "",
     texto: fila.texto || "",
@@ -156,6 +157,7 @@ function pedidoPublico(p) {
     fecha: p.fecha,
     numero: p.numero,
     nombre: p.nombre,
+    perfil: p.perfil || "",
     productos: p.productos,
     talla: p.talla,
     texto: p.texto,
@@ -180,6 +182,7 @@ async function conectarBaseDeDatos() {
       recibo_b64 TEXT,
       estado TEXT
     )`);
+    await pool.query("ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS perfil TEXT");
     await pool.query(`CREATE TABLE IF NOT EXISTS settings (
       clave TEXT PRIMARY KEY,
       valor TEXT
@@ -212,13 +215,14 @@ async function guardarPedidos() {
     try {
       for (const p of PEDIDOS) {
         await pool.query(
-          `INSERT INTO pedidos (id, fecha, numero, nombre, productos, talla, texto, recibo, recibo_b64, estado)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+          `INSERT INTO pedidos (id, fecha, numero, nombre, perfil, productos, talla, texto, recibo, recibo_b64, estado)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
            ON CONFLICT (id) DO UPDATE SET
              fecha=EXCLUDED.fecha, numero=EXCLUDED.numero, nombre=EXCLUDED.nombre,
-             productos=EXCLUDED.productos, talla=EXCLUDED.talla, texto=EXCLUDED.texto,
-             recibo=EXCLUDED.recibo, recibo_b64=EXCLUDED.recibo_b64, estado=EXCLUDED.estado`,
-          [p.id, p.fecha, p.numero || "", p.nombre || "Sin nombre", JSON.stringify(p.productos || []), p.talla || "", p.texto || "", p.recibo || null, p.recibo_b64 || null, p.estado || "pendiente"]
+             perfil=EXCLUDED.perfil, productos=EXCLUDED.productos, talla=EXCLUDED.talla,
+             texto=EXCLUDED.texto, recibo=EXCLUDED.recibo, recibo_b64=EXCLUDED.recibo_b64,
+             estado=EXCLUDED.estado`,
+          [p.id, p.fecha, p.numero || "", p.nombre || "Sin nombre", p.perfil || "", JSON.stringify(p.productos || []), p.talla || "", p.texto || "", p.recibo || null, p.recibo_b64 || null, p.estado || "pendiente"]
         );
       }
     } catch (e) {
@@ -481,12 +485,13 @@ function pedidosDe(numero) {
   );
 }
 
-function crearPedido(numero, nombre, productos, texto) {
+function crearPedido(numero, nombre, productos, texto, perfil) {
   const pedido = {
     id: Math.random().toString(36).slice(2, 8).toUpperCase(),
     fecha: new Date().toISOString(),
     numero: numero || "",
     nombre: nombre || "Sin nombre",
+    perfil: perfil || "",
     productos: (productos || []).map((p) => `${p.nombre} - ${formatoPrecio(p.precio)}`),
     talla: "",
     texto: texto || "",
@@ -501,13 +506,23 @@ function crearPedido(numero, nombre, productos, texto) {
 
 function extraerNombre(texto) {
   const m = normalizar(texto);
-  let n = m.match(/mi nombre es\s+([a-záéíóúñ\s]+)/);
-  if (n) return n[1].trim().split(/\s+/).slice(0, 2).join(" ");
-  n = m.match(/me llamo\s+([a-záéíóúñ\s]+)/);
-  if (n) return n[1].trim().split(/\s+/).slice(0, 2).join(" ");
-  n = m.match(/soy\s+([a-záéíóúñ]+)/);
-  if (n) return n[1].trim();
-  return "";
+  const basura = new Set(["de", "del", "el", "la", "las", "los", "un", "una", "unos", "unas", "tu", "tus", "su", "sus", "me", "mi", "lo", "que", "y", "por", "para", "con", "cliente", "amigo", "a", "al", "desde", "es"]);
+  let captura = "";
+  let n = m.match(/mi nombre es\s+([a-z]+(?:\s+[a-z]+)?)/);
+  if (n) captura = n[1];
+  else {
+    n = m.match(/me llamo\s+([a-z]+(?:\s+[a-z]+)?)/);
+    if (n) captura = n[1];
+    else {
+      n = m.match(/soy\s+([a-z]+)/);
+      if (n) captura = n[1];
+    }
+  }
+  if (!captura) return "";
+  const partes = captura.split(/\s+/).filter((w) => !basura.has(w));
+  const limpio = partes.slice(0, 2).join(" ");
+  if (!limpio || limpio.length < 2) return "";
+  return limpio;
 }
 
 const REGEX_COMPRA = /compr|pedir|pedido|pagar|pago|pague|pagaste|deposit|transfer|comprobante|me lo llevo|apart|clabe|efectivo|tarjeta|me interesa|lo quiero/;
@@ -685,6 +700,17 @@ app.post("/webhook", async (req, res) => {
 
           const mNorm = normalizar(textoUsuario);
 
+          // Si el cliente dice su nombre, guardarlo en el chat y en el pedido abierto
+          const nombreEnMensaje = extraerNombre(textoUsuario);
+          if (nombreEnMensaje) {
+            chat.nombreCliente = nombreEnMensaje[0].toUpperCase() + nombreEnMensaje.slice(1);
+            const abierto = pedidoActivo(emisor);
+            if (abierto && abierto.nombre !== chat.nombreCliente) {
+              abierto.nombre = chat.nombreCliente;
+              guardarPedidos();
+            }
+          }
+
           // ---- Consulta de estatus del paquete ----
           if (REGEX_ESTATUS.test(mNorm) && !REGEX_COMPRA.test(mNorm)) {
             const pedidos = pedidosDe(emisor);
@@ -721,10 +747,11 @@ app.post("/webhook", async (req, res) => {
           if (esCompra || esComprobante) {
             let pedido = pedidoActivo(emisor);
             if (!pedido) {
-              pedido = crearPedido(emisor, nombreCliente, productos, textoUsuario);
+              pedido = crearPedido(emisor, chat.nombreCliente || "", productos, textoUsuario, nombreCliente);
               chat.pedidoId = pedido.id;
+              const clienteRef = pedido.nombre === "Sin nombre" && pedido.perfil ? `${pedido.nombre} (perfil: ${pedido.perfil})` : pedido.nombre;
               await notificarOwner(
-                `🛒 *NUEVO PEDIDO / INTERÉS*\n👤 Cliente: ${pedido.nombre}\n📱 Número: ${pedido.numero}\n📦 Producto: ${(pedido.productos || []).join(", ") || "por confirmar"}\n💬 Mensaje: ${pedido.texto}\n🕒 ${new Date().toLocaleString("es-MX")}\n➡️ Cuando te caiga el pago responde: *"confirmar ${pedido.id}"*`
+                `🛒 *NUEVO PEDIDO / INTERÉS*\n👤 Cliente: ${clienteRef}\n📱 Número: ${pedido.numero}\n📦 Producto: ${(pedido.productos || []).join(", ") || "por confirmar"}\n💬 Mensaje: ${pedido.texto}\n🕒 ${new Date().toLocaleString("es-MX")}\n➡️ Cuando te caiga el pago responde: *"confirmar ${pedido.id}"*`
               );
             } else {
               // actualizar el pedido abierto
@@ -732,15 +759,18 @@ app.post("/webhook", async (req, res) => {
                 pedido.productos = productos.map((p) => `${p.nombre} - ${formatoPrecio(p.precio)}`);
               }
               if (!pedido.nombre || pedido.nombre === "Sin nombre") {
-                pedido.nombre = nombreCliente || pedido.nombre;
+                pedido.nombre = chat.nombreCliente || "Sin nombre";
+              }
+              if (!pedido.perfil && nombreCliente) {
+                pedido.perfil = nombreCliente;
               }
               pedido.texto = textoUsuario;
               guardarPedidos();
             }
 
-            // Nombre del cliente si lo dice en el mensaje
+            // Nombre del cliente si lo dice en el mensaje (siempre gana sobre el nombre del perfil)
             const nombreDetectado = extraerNombre(textoUsuario);
-            if (nombreDetectado && (!pedido.nombre || pedido.nombre === "Sin nombre")) {
+            if (nombreDetectado) {
               pedido.nombre = nombreDetectado[0].toUpperCase() + nombreDetectado.slice(1);
               guardarPedidos();
             }
@@ -1043,9 +1073,10 @@ function card(p){
   var prods=(p.productos||[]).map(function(x){return "<li>"+x+"</li>";}).join("");
   var recibo=p.recibo?'<a class="recibo" href="/'+p.recibo+'" target="_blank"><img src="/'+p.recibo+'" alt="comprobante"><span>Ver comprobante</span></a>':"";
   var num=p.numero?'<b>📱 '+p.numero+'</b> <a href="https://wa.me/'+p.numero+'" style="color:#7fb2ff">(abrir chat)</a>':"<b>📱 sin número</b>";
+  var perfilH=(p.perfil && p.nombre==="Sin nombre")?' <span style="color:#888">(perfil: '+p.perfil.replace(/</g,"&lt;")+')</span>':"";
   return '<div class="pedido'+(p.nuevo?" nuevo":"")+'">'+
     '<div class="phead"><span class="pid">'+p.id+'</span><span class="badge '+est[1]+'">'+est[0]+'</span></div>'+
-    '<div class="info"><b>'+p.nombre+'</b> · '+num+'<br>🗓 '+fmtFecha(p.fecha)+(p.talla?" · 👕 "+p.talla:"")+'</div>'+
+    '<div class="info"><b>'+p.nombre+'</b>'+perfilH+' · '+num+'<br>🗓 '+fmtFecha(p.fecha)+(p.talla?" · 👕 "+p.talla:"")+'</div>'+
     (prods?'<ul class="prods">'+prods+'</ul>':"")+
     recibo+
     (p.texto?'<div class="texto">'+p.texto.replace(/</g,"&lt;")+'</div>':"")+
