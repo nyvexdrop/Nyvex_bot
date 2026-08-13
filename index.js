@@ -605,7 +605,7 @@ async function generarRespuesta(numero, mensaje) {
       }
     }
   }
-  return "Disculpa, por el momento no puedo responder 😕 Escríbenos por Instagram 📸 *@nyvex_drop* o aquí con un asesor 👋";
+  return "Disculpa, por el momento no puedo responder 😕 Escríbenos por Instagram 📸 *@nyvex_drop* 👋";
 }
 
 // ---------- ENVIAR MENSAJE POR WHATSAPP ----------
