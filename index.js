@@ -29,13 +29,19 @@ const BOT_PHONE_NUMBER = process.env.BOT_PHONE_NUMBER || "";
 // Número del dueño al que se le avisa cuando hay un pedido/compra
 const OWNER_PHONE = process.env.OWNER_PHONE || BOT_PHONE_NUMBER || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
-// Modelos de respaldo: si el principal falla (cambio de modelos de Google), usa otro
+// Modelos de respaldo: cada uno tiene su propia cuota gratis (~20 peticiones/día).
+// Si el principal se agota (429), el bot rota al siguiente para seguir respondiendo.
 const MODELOS_GEMINI = [
   GEMINI_MODEL,
   "gemini-3.6-flash",
   "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.1-flash-lite",
+  "gemini-flash-lite-latest",
   "gemini-flash-latest",
-];
+  "gemini-3-flash-preview",
+  "gemini-omni-flash-preview",
+].filter((m, i, arr) => m && arr.indexOf(m) === i);
 const PORT = process.env.PORT || 3000;
 const SITE_URL = (process.env.SITE_URL || "").replace(/\/+$/, "");
 
@@ -557,32 +563,46 @@ async function generarRespuesta(numero, mensaje) {
   contents.push({ role: "user", parts: [{ text: mensaje }] });
 
   for (const modelo of MODELOS_GEMINI) {
-    try {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${GEMINI_KEY}`;
+    let intentos = 0;
+    while (intentos < 2) {
+      intentos++;
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${GEMINI_KEY}`;
 
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          system_instruction: { parts: [{ text: INSTRUCCIONES }] },
-          contents,
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 900
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            system_instruction: { parts: [{ text: INSTRUCCIONES }] },
+            contents,
+            generationConfig: {
+              temperature: 0.7,
+              maxOutputTokens: 900
+            }
+          })
+        });
+
+        const data = await res.json();
+        const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        if (texto) return texto.trim();
+
+        if (data?.error) {
+          console.error(`Error Gemini (${modelo}):`, data.error.message);
+          // Si es solo la cuota momentánea, espera lo que pide y reintenta una vez
+          if (res.status === 429 && intentos < 2) {
+            const detalle = data.error.details || [];
+            const retry = detalle.find((d) => d.retryDelay)?.retryDelay || "5s";
+            const seg = Math.min(parseInt(retry) || 5, 8);
+            await new Promise((r) => setTimeout(r, seg * 1000));
+            continue;
           }
-        })
-      });
-
-      const data = await res.json();
-      const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-      if (texto) return texto.trim();
-
-      if (data?.error) {
-        console.error(`Error Gemini (${modelo}):`, data.error.message);
+        }
+        break;
+      } catch (error) {
+        console.error(`Error en Gemini (${modelo}):`, error.message);
+        break;
       }
-    } catch (error) {
-      console.error(`Error en Gemini (${modelo}):`, error.message);
     }
   }
   return "Disculpa, por el momento no puedo responder. El equipo de Nyvex te atiende al instante 👋";
