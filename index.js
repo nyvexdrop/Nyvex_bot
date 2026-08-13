@@ -92,6 +92,7 @@ const PRODUCTOS = JSON.parse(
 // Base de datos en línea (Neon/Postgres): guarda TODO de forma permanente.
 // Si no hay DATABASE_URL (pruebas locales, por ejemplo), se usa pedidos.json.
 const { Pool } = require("pg");
+const webpush = require("web-push");
 const PEDIDOS_PATH = path.join(__dirname, "pedidos.json");
 const pool = process.env.DATABASE_URL
   ? new Pool({
@@ -163,7 +164,7 @@ function pedidoPublico(p) {
   };
 }
 
-// Conecta a la base de datos, crea la tabla y carga/migra los pedidos
+// Conecta a la base de datos, crea las tablas y carga/migra los pedidos
 async function conectarBaseDeDatos() {
   if (!pool) return;
   try {
@@ -179,6 +180,15 @@ async function conectarBaseDeDatos() {
       recibo_b64 TEXT,
       estado TEXT
     )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS settings (
+      clave TEXT PRIMARY KEY,
+      valor TEXT
+    )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS push_subs (
+      endpoint TEXT PRIMARY KEY,
+      datos JSONB
+    )`);
+    await configurarPush();
     const res = await pool.query("SELECT * FROM pedidos");
     if (res.rows.length > 0) {
       PEDIDOS = res.rows.map(pedidoDesdeFila);
@@ -219,6 +229,72 @@ async function guardarPedidos() {
     fs.writeFileSync(PEDIDOS_PATH, JSON.stringify(PEDIDOS, null, 2));
   } catch (e) {
     console.error("Error guardando pedidos.json:", e.message);
+  }
+}
+
+// ---------- NOTIFICACIONES PUSH (para el celular del dueño) ----------
+// Las llaves VAPID se generan una vez y se guardan en la BD, así el celular
+// las reconoce aunque Render se reinicie. No hay que configurar nada manual.
+let VAPID_PUBLIC = null;
+let VAPID_PRIVATE = null;
+
+async function configurarPush() {
+  if (!pool) return;
+  try {
+    let [priv, pub] = await Promise.all([
+      pool.query("SELECT valor FROM settings WHERE clave = $1", ["vapid_private"]),
+      pool.query("SELECT valor FROM settings WHERE clave = $1", ["vapid_public"]),
+    ]);
+    if (!priv.rows[0] || !pub.rows[0]) {
+      const keys = webpush.generateVAPIDKeys();
+      VAPID_PRIVATE = keys.privateKey;
+      VAPID_PUBLIC = keys.publicKey;
+      await pool.query(
+        `INSERT INTO settings (clave, valor) VALUES ($1,$2)
+         ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor`,
+        ["vapid_private", VAPID_PRIVATE]
+      );
+      await pool.query(
+        `INSERT INTO settings (clave, valor) VALUES ($1,$2)
+         ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor`,
+        ["vapid_public", VAPID_PUBLIC]
+      );
+    } else {
+      VAPID_PRIVATE = priv.rows[0].valor;
+      VAPID_PUBLIC = pub.rows[0].valor;
+    }
+    webpush.setVapidDetails("mailto:owner@nyvexdrop.mx", VAPID_PUBLIC, VAPID_PRIVATE);
+    console.log("🔔 Push listo (llaves VAPID cargadas)");
+  } catch (e) {
+    console.error("⚠️ No se pudo configurar push:", e.message);
+  }
+}
+
+// Manda una notificación al celular del dueño (y a cualquier dispositivo donde
+// tenga el admin instalado). Las suscripciones viejas se limpian solas.
+async function enviarPush(titulo, cuerpo) {
+  if (!pool || !VAPID_PUBLIC) return;
+  try {
+    const res = await pool.query("SELECT * FROM push_subs");
+    for (const fila of res.rows) {
+      try {
+        await webpush.sendNotification(
+          fila.datos,
+          JSON.stringify({
+            title: titulo,
+            body: cuerpo,
+            icon: "/img/logo.jpeg",
+            badge: "/img/logo.jpeg",
+          })
+        );
+      } catch (e) {
+        if (e.statusCode === 410 || e.statusCode === 404) {
+          await pool.query("DELETE FROM push_subs WHERE endpoint = $1", [fila.endpoint]).catch(() => {});
+        }
+      }
+    }
+  } catch (e) {
+    console.error("Error enviando push:", e.message);
   }
 }
 
@@ -467,13 +543,16 @@ async function descargarMedia(mediaId) {
 async function notificarOwner(mensaje) {
   if (!OWNER_PHONE) {
     console.log("⚠️ OWNER_PHONE no configurado, no se pudo avisar al dueño");
-    return;
+  } else {
+    try {
+      await enviarWhatsApp(OWNER_PHONE, mensaje);
+    } catch (e) {
+      console.error("Error avisando al dueño:", e.message);
+    }
   }
-  try {
-    await enviarWhatsApp(OWNER_PHONE, mensaje);
-  } catch (e) {
-    console.error("Error avisando al dueño:", e.message);
-  }
+  // Notificación push al celular (si tiene el admin instalado como app)
+  const simple = mensaje.replace(/\*+/g, "").replace(/\n+/g, " ").slice(0, 120);
+  enviarPush("🔔 Aviso del bot", simple);
 }
 
 function mensajeEstadoCliente(pedido) {
@@ -996,8 +1075,38 @@ document.getElementById("recargar").addEventListener("click",function(e){e.preve
 cargar();
 setInterval(cargar,15000);
 </script>
-<script>if("Notification" in window && Notification.permission==="default"){Notification.requestPermission();}
-if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js").catch(function(){});}</script>
+<script>
+function urlBase64ToUint8Array(base64String){
+  var padding="=".repeat((4-base64String.length%4)%4);
+  var base64=(base64String+padding).replace(/-/g,"+").replace(/_/g,"/");
+  var raw=window.atob(base64);
+  var arr=new Uint8Array(raw.length);
+  for(var i=0;i<raw.length;i++)arr[i]=raw.charCodeAt(i);
+  return arr;
+}
+function registrarPush(){
+  if(!("Notification" in window)||!("PushManager" in window))return;
+  if(Notification.permission!=="granted")return;
+  if(!navigator.serviceWorker)return;
+  navigator.serviceWorker.ready.then(function(reg){
+    return fetch("/api/push/public-key").then(function(r){return r.json();}).then(function(d){
+      if(!d.publicKey)return;
+      return reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(d.publicKey)});
+    });
+  }).then(function(sub){
+    if(!sub)return;
+    return fetch("/api/admin/push/subscribe?pass="+PASS,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({subscription:sub})});
+  }).catch(function(e){console.log("push:",e.message);});
+}
+if("Notification" in window){
+  if(Notification.permission==="default"){
+    Notification.requestPermission().then(function(p){if(p==="granted")registrarPush();});
+  } else if(Notification.permission==="granted"){
+    registrarPush();
+  }
+}
+if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js").catch(function(){});}
+</script>
 </body></html>`;
 
 app.get("/admin", (req, res) => {
@@ -1026,7 +1135,51 @@ self.addEventListener("fetch", function(e){
   var url = new URL(e.request.url);
   if (url.pathname.indexOf("/api/") === 0 || url.pathname.indexOf("/admin") === 0 || url.pathname.indexOf("/pedidos") === 0 || url.pathname.indexOf("/recibos/") === 0) return;
   e.respondWith(fetch(e.request).catch(function(){ return caches.match(e.request); }));
+});
+self.addEventListener("push", function(e){
+  var data = {};
+  try { data = e.data ? e.data.json() : {}; } catch(err) {}
+  e.waitUntil(self.registration.showNotification(data.title || "Nyvex Admin", {
+    body: data.body || "",
+    icon: data.icon || "/img/logo.jpeg",
+    badge: data.badge || "/img/logo.jpeg",
+    tag: "pedido",
+    vibrate: [250,120,250],
+    data: { url: "/admin" }
+  }));
+});
+self.addEventListener("notificationclick", function(e){
+  e.notification.close();
+  e.waitUntil(clients.matchAll({ type: "window", includeUncontrolled: true }).then(function(list){
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].url.indexOf("/admin") > -1) return list[i].focus();
+    }
+    return clients.openWindow(e.notification.data.url || "/admin");
+  }));
 });`);
+});
+
+// Llave pública para que el admin (celular) se pueda registrar a las notificaciones
+app.get("/api/push/public-key", (req, res) => {
+  res.json({ publicKey: VAPID_PUBLIC || null });
+});
+
+// Guarda la suscripción del celular del dueño
+app.post("/api/admin/push/subscribe", async (req, res) => {
+  if (!esAdmin(req)) return res.status(401).json({ ok: false, error: "No autorizado" });
+  const sub = (req.body || {}).subscription;
+  if (!sub || !sub.endpoint) return res.status(400).json({ ok: false, error: "Suscripción inválida" });
+  try {
+    await pool.query(
+      `INSERT INTO push_subs (endpoint, datos) VALUES ($1, $2)
+       ON CONFLICT (endpoint) DO UPDATE SET datos = EXCLUDED.datos`,
+      [sub.endpoint, JSON.stringify(sub)]
+    );
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("Error guardando suscripción push:", e.message);
+    res.status(500).json({ ok: false, error: "No se pudo guardar" });
+  }
 });
 
 // Acción desde la app admin (confirmar / enviando / entregado / falso / no coincide / borroso)
