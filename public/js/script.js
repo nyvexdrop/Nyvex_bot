@@ -7,8 +7,24 @@
 // Número del negocio (el mismo que responde el bot)
 const WHATSAPP_NUMERO = "525534897969";
 
-// CLABE para transferencia / depósito
+// CLABE para transferencia / depósito (se comparte al confirmar el pedido)
 const CLABE = "638180010134011001";
+
+// Tenis: aún no disponibles, se muestran como "Próximamente"
+const TENIS_PROXIMAMENTE = [
+  { nombre: "Tenis Urbanos", emoji: "👟" },
+  { nombre: "Tenis Deportivos", emoji: "👟" },
+  { nombre: "Tenis Retro", emoji: "👟" },
+];
+
+const SECCIONES = [
+  { cat: "sudaderas", titulo: "Sudaderas", emoji: "🧥" },
+  { cat: "audifonos", titulo: "Audífonos", emoji: "🎧" },
+  { cat: "accesorios", titulo: "Accesorios", emoji: "🔌" },
+  { cat: "celulares", titulo: "Celulares", emoji: "📱" },
+  { cat: "perfumes", titulo: "Perfumes", emoji: "🧴" },
+  { cat: "tenis", titulo: "Tenis", emoji: "👟" },
+];
 
 const ESTADOS = {
   pendiente: { emoji: "⏳", label: "Analizando pago", clase: "pendiente" },
@@ -74,6 +90,7 @@ function renderCategorias() {
       const etiqueta = cat.charAt(0).toUpperCase() + cat.slice(1);
       return `<div class="categoria${categoriaActiva === cat ? " activa" : ""}" data-cat="${cat}">${emoji} ${etiqueta}</div>`;
     }),
+    `<div class="categoria${categoriaActiva === "tenis" ? " activa" : ""}" data-cat="tenis">👟 Tenis</div>`,
   ].join("");
 
   categoriasGrid.querySelectorAll("[data-cat]").forEach((el) => {
@@ -86,42 +103,88 @@ function renderCategorias() {
   });
 }
 
-// ---------- Productos ----------
-function renderProductos() {
-  const lista =
-    categoriaActiva === "todas"
-      ? productos
-      : productos.filter((p) => p.categoria === categoriaActiva);
-
-  productosSubtitulo.textContent =
-    categoriaActiva === "todas"
-      ? `${productos.length} productos en catálogo`
-      : `Categoría: ${categoriaActiva.charAt(0).toUpperCase() + categoriaActiva.slice(1)}`;
-
-  grid.innerHTML = lista
-    .map((p, i) => {
-      const imgHtml = p.imagen
-        ? `<img src="${p.imagen}" alt="${p.nombre}" class="producto-img-real">`
-        : `<span class="producto-img-emoji">${p.emoji || "🛍️"}</span>`;
-      const badge = p.tipo === "replica" ? `<span class="producto-badge">RÉPLICA</span>` : "";
-      const descHtml = p.descripcion
-        ? `<p class="producto-descripcion">${p.descripcion}</p>`
-        : "";
-
-      return `
-      <article class="producto">
-        <div class="producto-img">${badge}${imgHtml}</div>
+// ---------- Productos (secciones con divisores) ----------
+function renderProducto(p) {
+  if (p.proximamente) {
+    return `
+      <article class="producto producto-proximamente">
+        <div class="producto-img">
+          <span class="producto-img-emoji">${p.emoji || "👟"}</span>
+        </div>
         <div class="producto-info">
           <p class="producto-nombre">${p.nombre}</p>
-          ${descHtml}
-          <p class="producto-precio">${precio(p.precio)}</p>
-          <button class="producto-boton" data-index="${i}">
-            💬 Comprar
-          </button>
+          <span class="producto-badge-prox">⏳ PRÓXIMAMENTE</span>
         </div>
       </article>`;
-    })
-    .join("");
+  }
+
+  const idx = productos.findIndex((x) => x.nombre === p.nombre);
+  const imgHtml = p.imagen
+    ? `<img src="${p.imagen}" alt="${p.nombre}" class="producto-img-real">`
+    : `<span class="producto-img-emoji">${p.emoji || "🛍️"}</span>`;
+  const badge = p.tipo === "replica" ? `<span class="producto-badge">RÉPLICA</span>` : "";
+  const descHtml = p.descripcion
+    ? `<p class="producto-descripcion">${p.descripcion}</p>`
+    : "";
+
+  return `
+    <article class="producto">
+      <div class="producto-img">${badge}${imgHtml}</div>
+      <div class="producto-info">
+        <p class="producto-nombre">${p.nombre}</p>
+        ${descHtml}
+        <p class="producto-precio">${precio(p.precio)}</p>
+        <button class="producto-boton" data-index="${idx}">
+          💬 Comprar
+        </button>
+      </div>
+    </article>`;
+}
+
+function renderSeccion(seccion, lista, i) {
+  const divisor = i === 0 ? "" : `<div class="seccion-divisor"></div>`;
+  return `
+    ${divisor}
+    <div class="seccion-prod">
+      <h3 class="seccion-prod-titulo">${seccion.emoji} ${seccion.titulo}</h3>
+      <div class="productos-grid">
+        ${lista.map((p) => renderProducto(p)).join("")}
+      </div>
+    </div>`;
+}
+
+function renderProductos() {
+  if (categoriaActiva === "todas") {
+    productosSubtitulo.textContent = `${productos.length} productos en catálogo + Tenis próximamente`;
+    let html = "";
+    let i = 0;
+    SECCIONES.forEach((seccion) => {
+      const lista =
+        seccion.cat === "tenis"
+          ? TENIS_PROXIMAMENTE.map((t) => ({ ...t, proximamente: true }))
+          : productos.filter((p) => p.categoria === seccion.cat);
+      if (!lista.length) return;
+      html += renderSeccion(seccion, lista, i);
+      i++;
+    });
+    grid.innerHTML = html;
+    return;
+  }
+
+  const seccion = SECCIONES.find((s) => s.cat === categoriaActiva);
+  if (!seccion) return;
+
+  productosSubtitulo.textContent =
+    categoriaActiva === "tenis"
+      ? "Tenis: llegamos pronto 😉"
+      : `Categoría: ${seccion.titulo}`;
+
+  const lista =
+    categoriaActiva === "tenis"
+      ? TENIS_PROXIMAMENTE.map((t) => ({ ...t, proximamente: true }))
+      : productos.filter((p) => p.categoria === categoriaActiva);
+
+  grid.innerHTML = renderSeccion(seccion, lista, 0);
 }
 
 // ---------- Cargar catálogo (una sola fuente: productos.json) ----------
@@ -166,8 +229,7 @@ function abrirCheckout(producto) {
     </div>
     ${tallaHtml}
     <div class="aviso-clabe">
-      💳 El pago es por <strong>transferencia o depósito</strong> (CLABE ${CLABE}).
-      Al confirmar tu pedido te damos el folio y solo tienes que enviar tu comprobante por WhatsApp.
+      💳 El pago es por <strong>transferencia o depósito</strong>. Al confirmar tu pedido te damos tu folio y los datos de pago; solo envías tu comprobante por WhatsApp.
     </div>
     <div class="modal-botones">
       <button class="btn" id="checkoutConfirmar">Confirmar pedido</button>
