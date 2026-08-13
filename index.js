@@ -753,6 +753,195 @@ app.get("/modelos", (req, res) => {
   );
 });
 
+// ---------- ADMIN (app móvil para administrar pedidos) ----------
+// Protegida con contraseña: /admin?pass=... (usa ADMIN_PASSWORD o el token de verificación)
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || VERIFY_TOKEN || "nyvex-admin";
+
+function esAdmin(req) {
+  return req.query.pass === ADMIN_PASSWORD;
+}
+
+const ADMIN_LOGIN_HTML = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nyvex Admin</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#0a0a0a;color:#fff;margin:0;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.login{max-width:320px;width:100%;padding:2rem;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:16px}
+h1{font-size:1.4rem;margin:0 0 1rem;text-align:center}
+input{width:100%;padding:.8rem;margin-bottom:1rem;background:#0a0a0a;border:1px solid #2a2a2a;color:#fff;border-radius:10px;font-size:1rem;box-sizing:border-box}
+button{width:100%;padding:.9rem;background:#fff;color:#0a0a0a;border:none;border-radius:999px;font-weight:700;font-size:1rem}
+</style></head><body>
+<div class="login">
+<h1>🔐 Nyvex Admin</h1>
+<input type="password" id="pass" placeholder="Contraseña">
+<button onclick="go()">Entrar</button>
+</div>
+<script>
+function go(){var p=document.getElementById("pass").value;if(p)location.href="/admin?pass="+encodeURIComponent(p);}
+document.getElementById("pass").addEventListener("keydown",function(e){if(e.key==="Enter")go();});
+</script>
+</body></html>`;
+
+const ADMIN_HTML = `<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Nyvex Admin</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0a0a0a">
+<style>
+body{font-family:system-ui,sans-serif;background:#0a0a0a;color:#fff;margin:0;padding:0 12px 24px}
+.topbar{position:sticky;top:0;background:#0a0a0a;padding:14px 4px 10px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #2a2a2a;z-index:10}
+.topbar h1{font-size:1.15rem;margin:0}
+.topbar a{color:#9a9a9a;font-size:.8rem;text-decoration:none}
+.pedido{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:14px;padding:14px;margin-top:12px}
+.pedido.nuevo{border-color:#ffd54f}
+.phead{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap}
+.pid{font-weight:800;letter-spacing:2px;font-size:1.05rem}
+.badge{font-size:.7rem;font-weight:700;padding:4px 9px;border-radius:999px;white-space:nowrap}
+.b-pendiente{background:#4a3a08;color:#ffd54f}.b-confirmado{background:#0f3d1a;color:#7dff9e}
+.b-enviando{background:#0b2a52;color:#7fb2ff}.b-entregado{background:#33114f;color:#d9a7ff}
+.info{color:#9a9a9a;font-size:.82rem;margin-top:8px}
+.info b{color:#fff}
+.prods{margin:8px 0 0 0;padding-left:18px;font-size:.9rem}
+.recibo{display:flex;align-items:center;gap:8px;margin-top:8px;flex-wrap:wrap}
+.recibo img{width:64px;height:64px;object-fit:cover;border-radius:8px;border:1px solid #2a2a2a}
+.recibo span{color:#7fb2ff;font-size:.8rem}
+.texto{background:#0a0a0a;border:1px solid #2a2a2a;border-radius:8px;padding:8px;font-size:.8rem;color:#cfcfcf;margin-top:8px;white-space:pre-wrap;word-break:break-word}
+.botones{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:10px}
+.botones button{border:none;border-radius:9px;padding:11px 4px;font-size:.78rem;font-weight:700;color:#fff;cursor:pointer;line-height:1.2}
+.b-confirmar{background:#2e7d32}.b-enviar{background:#1565c0}.b-entregar{background:#6a1b9a}
+.b-falso{background:#8a2b2b}.b-no{background:#5f3b00}.b-borroso{background:#4a4a4a}
+.aviso{text-align:center;color:#9a9a9a;margin-top:14px;font-size:.8rem}
+.vacio{text-align:center;color:#9a9a9a;margin-top:3rem}
+</style></head><body>
+<div class="topbar">
+<h1>🛒 Nyvex Admin</h1>
+<div><a href="#" id="recargar">🔄 Actualizar</a> · <a href="/">🌐 Tienda</a></div>
+</div>
+<div id="lista"><p class="vacio">Cargando…</p></div>
+<p class="aviso">Se actualiza solo cada 15 segundos. Un toque en un botón avisa al cliente por WhatsApp.</p>
+<script>
+var PASS = ${JSON.stringify(ADMIN_PASSWORD)};
+var ESTADOS = {pendiente:["⏳ Analizando pago","b-pendiente"],confirmado:["✅ Confirmado","b-confirmado"],enviando:["📦 En camino","b-enviando"],entregado:["🎉 Entregado","b-entregado"]};
+var ultimoTotal = 0;
+
+function beep(){try{var c=new (window.AudioContext||window.webkitAudioContext)();var o=c.createOscillator();var g=c.createGain();o.connect(g);g.connect(c.destination);o.frequency.value=880;g.gain.value=0.08;o.start();setTimeout(function(){o.stop();c.close();},350);}catch(e){}}
+
+function fmtFecha(iso){var d=new Date(iso);return d.toLocaleString("es-MX",{dateStyle:"short",timeStyle:"short"});}
+
+function botones(p){
+  var accs=[["confirmar","✅<br>Confirmar","b-confirmar"],["enviando","📦<br>Enviando","b-enviar"],["entregado","🎉<br>Entregado","b-entregar"],["falso","🚫<br>Falso","b-falso"],["no_coincide","↔️<br>No coincide","b-no"],["borroso","🌫️<br>Borroso","b-borroso"]];
+  return '<div class="botones">'+accs.map(function(a){
+    return '<button class="'+a[2]+'" onclick="accion(\\''+p.id+'\\',\\''+a[0]+'\\')">'+a[1]+'</button>';
+  }).join("")+'</div>';
+}
+
+function card(p){
+  var est=ESTADOS[p.estado]||["❓ "+p.estado,"b-pendiente"];
+  var prods=(p.productos||[]).map(function(x){return "<li>"+x+"</li>";}).join("");
+  var recibo=p.recibo?'<a class="recibo" href="/'+p.recibo+'" target="_blank"><img src="/'+p.recibo+'" alt="comprobante"><span>Ver comprobante</span></a>':"";
+  var num=p.numero?'<b>📱 '+p.numero+'</b> <a href="https://wa.me/'+p.numero+'" style="color:#7fb2ff">(abrir chat)</a>':"<b>📱 sin número</b>";
+  return '<div class="pedido'+(p.nuevo?" nuevo":"")+'">'+
+    '<div class="phead"><span class="pid">'+p.id+'</span><span class="badge '+est[1]+'">'+est[0]+'</span></div>'+
+    '<div class="info"><b>'+p.nombre+'</b> · '+num+'<br>🗓 '+fmtFecha(p.fecha)+(p.talla?" · 👕 "+p.talla:"")+'</div>'+
+    (prods?'<ul class="prods">'+prods+'</ul>':"")+
+    recibo+
+    (p.texto?'<div class="texto">'+p.texto.replace(/</g,"&lt;")+'</div>':"")+
+    botones(p)+'</div>';
+}
+
+function cargar(){
+  fetch("/api/admin/pedidos?pass="+PASS).then(function(r){return r.json();}).then(function(data){
+    if(!Array.isArray(data)){document.getElementById("lista").innerHTML='<p class="vacio">Sin acceso. <a href="/admin">Volver a entrar</a></p>';return;}
+    if(ultimoTotal>0 && data.length>ultimoTotal) beep();
+    ultimoTotal=data.length;
+    document.getElementById("lista").innerHTML = data.length
+      ? data.map(card).join("")
+      : '<p class="vacio">Sin pedidos todavía</p>';
+  }).catch(function(){
+    document.getElementById("lista").innerHTML='<p class="vacio">Sin conexión. Reintentando…</p>';
+  });
+}
+
+function accion(id,acc){
+  fetch("/api/admin/accion?pass="+PASS,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,accion:acc})})
+    .then(function(r){return r.json();})
+    .then(function(data){cargar();if(!data.ok)alert(data.error||"Error");})
+    .catch(function(){alert("Sin conexión");});
+}
+
+document.getElementById("recargar").addEventListener("click",function(e){e.preventDefault();cargar();});
+cargar();
+setInterval(cargar,15000);
+</script>
+<script>if("serviceWorker" in navigator){navigator.serviceWorker.register("/sw.js").catch(function(){});}</script>
+</body></html>`;
+
+app.get("/admin", (req, res) => {
+  if (!esAdmin(req)) return res.send(ADMIN_LOGIN_HTML);
+  res.send(ADMIN_HTML);
+});
+
+// PWA: se puede instalar como app en el celular (Agregar a pantalla de inicio)
+app.get("/manifest.json", (req, res) => {
+  res.json({
+    name: "Nyvex Admin",
+    short_name: "Nyvex",
+    start_url: "/admin",
+    display: "standalone",
+    background_color: "#0a0a0a",
+    theme_color: "#0a0a0a",
+    icons: [{ src: "/img/logo.jpeg", sizes: "512x512", type: "image/jpeg" }],
+  });
+});
+
+app.get("/sw.js", (req, res) => {
+  res.type("application/javascript").send(`const CACHE = "nyvex-admin-v1";
+self.addEventListener("install", function(){ self.skipWaiting(); });
+self.addEventListener("activate", function(e){ e.waitUntil(clients.claim()); });
+self.addEventListener("fetch", function(e){
+  var url = new URL(e.request.url);
+  if (url.pathname.indexOf("/api/") === 0 || url.pathname.indexOf("/admin") === 0 || url.pathname.indexOf("/pedidos") === 0 || url.pathname.indexOf("/recibos/") === 0) return;
+  e.respondWith(fetch(e.request).catch(function(){ return caches.match(e.request); }));
+});`);
+});
+
+// Acción desde la app admin (confirmar / enviando / entregado / falso / no coincide / borroso)
+app.post("/api/admin/accion", async (req, res) => {
+  if (!esAdmin(req)) return res.status(401).json({ ok: false, error: "No autorizado" });
+  const { id, accion } = req.body || {};
+  const pedido = PEDIDOS.find((p) => (p.id || "").toUpperCase() === String(id || "").toUpperCase());
+  if (!pedido) return res.json({ ok: false, error: "Pedido no encontrado" });
+
+  const estados = { confirmar: "confirmado", enviando: "enviando", entregado: "entregado" };
+  const rechazos = { falso: "falso", no_coincide: "no_coincide", borroso: "borroso" };
+
+  if (estados[accion]) {
+    pedido.estado = estados[accion];
+    guardarPedidos();
+    const msg = mensajeEstadoCliente(pedido);
+    if (msg && pedido.numero) {
+      await enviarWhatsApp(pedido.numero, msg).catch(() => {});
+    }
+  } else if (rechazos[accion]) {
+    const msg = mensajeRechazoCliente(pedido, rechazos[accion]);
+    if (msg && pedido.numero) {
+      await enviarWhatsApp(pedido.numero, msg).catch(() => {});
+    }
+  } else {
+    return res.json({ ok: false, error: "Acción inválida" });
+  }
+
+  res.json({ ok: true, pedido });
+});
+
+// Lista de pedidos para la app admin
+app.get("/api/admin/pedidos", (req, res) => {
+  if (!esAdmin(req)) return res.status(401).json({ ok: false, error: "No autorizado" });
+  res.json(PEDIDOS.slice().reverse());
+});
+
 // ---------- API PARA LA TIENDA WEB ----------
 app.post("/api/pedido", async (req, res) => {
   try {
