@@ -1001,7 +1001,7 @@ body{font-family:system-ui,sans-serif;background:#0a0a0a;color:#fff;margin:0;pad
 .botones{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:10px}
 .botones button{border:none;border-radius:9px;padding:11px 4px;font-size:.78rem;font-weight:700;color:#fff;cursor:pointer;line-height:1.2}
 .b-confirmar{background:#2e7d32}.b-enviar{background:#1565c0}.b-entregar{background:#6a1b9a}
-.b-falso{background:#8a2b2b}.b-no{background:#5f3b00}.b-borroso{background:#4a4a4a}
+.b-falso{background:#8a2b2b}.b-no{background:#5f3b00}.b-borroso{background:#4a4a4a}.b-borrar{background:#c62828}
 .aviso{text-align:center;color:#9a9a9a;margin-top:14px;font-size:.8rem}
 .vacio{text-align:center;color:#9a9a9a;margin-top:3rem}
 </style></head><body>
@@ -1029,9 +1029,13 @@ function fmtFecha(iso){var d=new Date(iso);return d.toLocaleString("es-MX",{date
 
 function botones(p){
   var accs=[["confirmar","✅<br>Confirmar","b-confirmar"],["enviando","📦<br>Enviando","b-enviar"],["entregado","🎉<br>Entregado","b-entregar"],["falso","🚫<br>Falso","b-falso"],["no_coincide","↔️<br>No coincide","b-no"],["borroso","🌫️<br>Borroso","b-borroso"]];
-  return '<div class="botones">'+accs.map(function(a){
+  var html='<div class="botones">'+accs.map(function(a){
     return '<button class="'+a[2]+'" onclick="accion(\\''+p.id+'\\',\\''+a[0]+'\\')">'+a[1]+'</button>';
-  }).join("")+'</div>';
+  }).join("");
+  if(p.estado==="entregado"){
+    html+='<button class="b-borrar" onclick="eliminar(\\''+p.id+'\\')">🗑️<br>Borrar</button>';
+  }
+  return html+'</div>';
 }
 
 function card(p){
@@ -1068,6 +1072,14 @@ function accion(id,acc){
   fetch("/api/admin/accion?pass="+PASS,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,accion:acc})})
     .then(function(r){return r.json();})
     .then(function(data){cargar();if(!data.ok)alert(data.error||"Error");})
+    .catch(function(){alert("Sin conexión");});
+}
+
+function eliminar(id){
+  if(!confirm("¿Borrar este pedido entregado del historial?"))return;
+  fetch("/api/admin/eliminar?pass="+PASS,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})})
+    .then(function(r){return r.json();})
+    .then(function(data){if(data.ok){cargar();}else{alert(data.error||"Error");}})
     .catch(function(){alert("Sin conexión");});
 }
 
@@ -1209,6 +1221,35 @@ app.post("/api/admin/accion", async (req, res) => {
   }
 
   res.json({ ok: true, pedido: pedidoPublico(pedido) });
+});
+
+// Eliminar un pedido entregado (para limpiar el historial)
+app.post("/api/admin/eliminar", async (req, res) => {
+  if (!esAdmin(req)) return res.status(401).json({ ok: false, error: "No autorizado" });
+  const id = String((req.body || {}).id || "").toUpperCase();
+  const idx = PEDIDOS.findIndex((p) => (p.id || "").toUpperCase() === id);
+  if (idx === -1) return res.json({ ok: false, error: "Pedido no encontrado" });
+  const p = PEDIDOS[idx];
+  if (p.estado !== "entregado") {
+    return res.json({ ok: false, error: "Solo se pueden borrar pedidos entregados" });
+  }
+  if (p.recibo) {
+    delete RECIBOS_MEM[p.recibo.replace("recibos/", "")];
+  }
+  if (pool) {
+    try {
+      await pool.query("DELETE FROM pedidos WHERE id = $1", [p.id]);
+    } catch (e) {
+      console.error("Error borrando en la BD:", e.message);
+    }
+  }
+  PEDIDOS.splice(idx, 1);
+  try {
+    fs.writeFileSync(PEDIDOS_PATH, JSON.stringify(PEDIDOS, null, 2));
+  } catch (e) {
+    console.error("Error guardando pedidos.json:", e.message);
+  }
+  res.json({ ok: true });
 });
 
 // Lista de pedidos para la app admin
