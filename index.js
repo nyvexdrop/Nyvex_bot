@@ -30,7 +30,8 @@ const BOT_PHONE_NUMBER = process.env.BOT_PHONE_NUMBER || "";
 const OWNER_PHONE = process.env.OWNER_PHONE || BOT_PHONE_NUMBER || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 // Modelos de respaldo: cada uno tiene su propia cuota gratis (~20 peticiones/día).
-// Si el principal se agota (429), el bot rota al siguiente para seguir respondiendo.
+// El gestor automático (estadoModelos) recuerda cuáles responden, bloquea los agotados
+// y prioriza los que funcionan, sin tocar nada manualmente.
 const MODELOS_GEMINI = [
   GEMINI_MODEL,
   "gemini-3.6-flash",
@@ -42,6 +43,43 @@ const MODELOS_GEMINI = [
   "gemini-3-flash-preview",
   "gemini-omni-flash-preview",
 ].filter((m, i, arr) => m && arr.indexOf(m) === i);
+
+// ---------- GESTOR AUTOMÁTICO DE MODELOS ----------
+// Cada modelo que falle (cuota agotada / error) se bloquea temporalmente,
+// y los que responden bien se guardan para intentarlos primero.
+const estadoModelos = {};
+
+function modeloBloqueado(m) {
+  const e = estadoModelos[m];
+  return e && e.bloqueadoHasta && Date.now() < e.bloqueadoHasta;
+}
+
+function bloquearModelo(m, ms) {
+  const e = estadoModelos[m] || {};
+  e.bloqueadoHasta = Date.now() + ms;
+  e.fallos = (e.fallos || 0) + 1;
+  estadoModelos[m] = e;
+  console.log(`🔒 ${m} bloqueado por ${Math.round(ms / 1000)}s (fallos: ${e.fallos})`);
+}
+
+function marcarOk(m) {
+  const e = estadoModelos[m] || {};
+  e.bloqueadoHasta = 0;
+  e.ultimoOk = Date.now();
+  e.fallos = 0;
+  estadoModelos[m] = e;
+}
+
+// Prioriza: primero los desbloqueados, y entre ellos los que respondieron más reciente
+function ordenarModelos() {
+  return MODELOS_GEMINI.slice().sort((a, b) => {
+    const bloqueados = (modeloBloqueado(a) ? 1 : 0) - (modeloBloqueado(b) ? 1 : 0);
+    if (bloqueados !== 0) return bloqueados;
+    const ea = estadoModelos[a] || {};
+    const eb = estadoModelos[b] || {};
+    return (eb.ultimoOk || 0) - (ea.ultimoOk || 0);
+  });
+}
 const PORT = process.env.PORT || 3000;
 const SITE_URL = (process.env.SITE_URL || "").replace(/\/+$/, "");
 
@@ -554,7 +592,8 @@ app.post("/webhook", async (req, res) => {
 });
 
 // ---------- INTELIGENCIA (Gemini gratis) ----------
-async function generarRespuesta(numero, mensaje) {
+async function generarRespuesta(numero, mensaje, intento) {
+  intento = intento || 1;
   const chat = getChat(numero);
   const contents = [];
   for (const turno of chat.historial.slice(-14)) {
@@ -562,49 +601,59 @@ async function generarRespuesta(numero, mensaje) {
   }
   contents.push({ role: "user", parts: [{ text: mensaje }] });
 
-  for (const modelo of MODELOS_GEMINI) {
-    let intentos = 0;
-    while (intentos < 2) {
-      intentos++;
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${GEMINI_KEY}`;
+  let huboCuota = false;
 
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            system_instruction: { parts: [{ text: INSTRUCCIONES }] },
-            contents,
-            generationConfig: {
-              temperature: 0.7,
-              maxOutputTokens: 900
-            }
-          })
-        });
+  for (const modelo of ordenarModelos()) {
+    if (modeloBloqueado(modelo)) continue;
+    try {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelo}:generateContent?key=${GEMINI_KEY}`;
 
-        const data = await res.json();
-        const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-        if (texto) return texto.trim();
-
-        if (data?.error) {
-          console.error(`Error Gemini (${modelo}):`, data.error.message);
-          // Si es solo la cuota momentánea, espera lo que pide y reintenta una vez
-          if (res.status === 429 && intentos < 2) {
-            const detalle = data.error.details || [];
-            const retry = detalle.find((d) => d.retryDelay)?.retryDelay || "5s";
-            const seg = Math.min(parseInt(retry) || 5, 8);
-            await new Promise((r) => setTimeout(r, seg * 1000));
-            continue;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system_instruction: { parts: [{ text: INSTRUCCIONES }] },
+          contents,
+          generationConfig: {
+            temperature: 0.7,
+            maxOutputTokens: 900
           }
-        }
-        break;
-      } catch (error) {
-        console.error(`Error en Gemini (${modelo}):`, error.message);
-        break;
+        })
+      });
+
+      const data = await res.json();
+      const texto = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (texto) {
+        marcarOk(modelo);
+        return texto.trim();
       }
+
+      if (data?.error) {
+        console.error(`Error Gemini (${modelo}):`, data.error.message);
+        if (res.status === 429) {
+          const detalle = data.error.details || [];
+          const retry = detalle.find((d) => d.retryDelay)?.retryDelay || "30s";
+          const seg = Math.min(parseInt(retry) || 30, 120);
+          bloquearModelo(modelo, seg * 1000);
+          huboCuota = true;
+        } else {
+          // Error raro: bloquear 5 minutos y seguir con otro modelo
+          bloquearModelo(modelo, 5 * 60 * 1000);
+        }
+      }
+    } catch (error) {
+      console.error(`Error en Gemini (${modelo}):`, error.message);
+      bloquearModelo(modelo, 60 * 1000);
     }
   }
+
+  // Si todo estaba agotado, esperar unos segundos y reintentar (máx. 2 rondas)
+  if (huboCuota && intento < 2) {
+    await new Promise((r) => setTimeout(r, 4000));
+    return generarRespuesta(numero, mensaje, intento + 1);
+  }
+
   return "Disculpa, por el momento no puedo responder 😕 Escríbenos por Instagram 📸 *@nyvex_drop* 👋";
 }
 
@@ -685,6 +734,23 @@ app.get("/config", (req, res) => {
     productos: PRODUCTOS.length,
     pedidos: PEDIDOS.length,
   });
+});
+
+// ---------- ESTADO DE LOS MODELOS (gestor automático) ----------
+app.get("/modelos", (req, res) => {
+  const ahora = Date.now();
+  res.json(
+    MODELOS_GEMINI.map((m) => {
+      const e = estadoModelos[m] || {};
+      const restante = e.bloqueadoHasta ? Math.max(0, Math.round((e.bloqueadoHasta - ahora) / 1000)) : 0;
+      return {
+        modelo: m,
+        estado: modeloBloqueado(m) ? `bloqueado (${restante}s)` : "disponible",
+        ultimo_ok: e.ultimoOk ? new Date(e.ultimoOk).toLocaleTimeString("es-MX") : null,
+        fallos: e.fallos || 0,
+      };
+    })
+  );
 });
 
 // ---------- API PARA LA TIENDA WEB ----------
