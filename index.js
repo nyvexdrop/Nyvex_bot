@@ -89,7 +89,17 @@ const PRODUCTOS = JSON.parse(
 );
 
 // ---------- PEDIDOS (historial de ventas / intereses) ----------
+// Base de datos en línea (Neon/Postgres): guarda TODO de forma permanente.
+// Si no hay DATABASE_URL (pruebas locales, por ejemplo), se usa pedidos.json.
+const { Pool } = require("pg");
 const PEDIDOS_PATH = path.join(__dirname, "pedidos.json");
+const pool = process.env.DATABASE_URL
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: { rejectUnauthorized: false },
+    })
+  : null;
+if (pool) pool.on("error", (e) => console.error("⚠️ Error en conexión BD:", e.message));
 let PEDIDOS = [];
 try {
   PEDIDOS = JSON.parse(fs.readFileSync(PEDIDOS_PATH, "utf8"));
@@ -100,17 +110,115 @@ try {
 // ---------- RECIBOS (comprobantes de pago) ----------
 const RECIBOS_DIR = path.join(__dirname, "recibos");
 if (!fs.existsSync(RECIBOS_DIR)) fs.mkdirSync(RECIBOS_DIR, { recursive: true });
+// Comprobantes también guardados en la BD para que no se pierdan al reiniciar
+const RECIBOS_MEM = {};
 
-// Servir fotos de productos, comprobantes y la tienda web (public/)
+// Servir fotos de productos y la tienda web (public/)
 app.use("/img", express.static(path.join(__dirname, "img")));
-app.use("/recibos", express.static(RECIBOS_DIR));
 app.use(express.static(path.join(__dirname, "public")));
 
-function guardarPedidos() {
+// Comprobantes: se sirven desde la memoria (cargada de la BD) o del disco local
+app.get("/recibos/:archivo", (req, res) => {
+  const archivo = req.params.archivo;
+  if (RECIBOS_MEM[archivo]) {
+    const buf = Buffer.from(RECIBOS_MEM[archivo], "base64");
+    const ext = (archivo.split(".").pop() || "").toLowerCase();
+    const tipos = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
+    res.setHeader("Content-Type", tipos[ext] || "application/octet-stream");
+    return res.send(buf);
+  }
+  res.sendFile(path.join(RECIBOS_DIR, archivo), (err) => {
+    if (err) res.status(404).end();
+  });
+});
+
+// Convierte una fila de la BD en un pedido
+function pedidoDesdeFila(fila) {
+  return {
+    id: fila.id,
+    fecha: fila.fecha,
+    numero: fila.numero || "",
+    nombre: fila.nombre || "Sin nombre",
+    productos: fila.productos || [],
+    talla: fila.talla || "",
+    texto: fila.texto || "",
+    recibo: fila.recibo || null,
+    recibo_b64: fila.recibo_b64 || null,
+    estado: fila.estado || "pendiente",
+  };
+}
+
+// Pedido sin datos internos (para mandar por la API)
+function pedidoPublico(p) {
+  return {
+    id: p.id,
+    fecha: p.fecha,
+    numero: p.numero,
+    nombre: p.nombre,
+    productos: p.productos,
+    talla: p.talla,
+    texto: p.texto,
+    recibo: p.recibo,
+    estado: p.estado,
+  };
+}
+
+// Conecta a la base de datos, crea la tabla y carga/migra los pedidos
+async function conectarBaseDeDatos() {
+  if (!pool) return;
+  try {
+    await pool.query(`CREATE TABLE IF NOT EXISTS pedidos (
+      id TEXT PRIMARY KEY,
+      fecha TEXT,
+      numero TEXT,
+      nombre TEXT,
+      productos JSONB,
+      talla TEXT,
+      texto TEXT,
+      recibo TEXT,
+      recibo_b64 TEXT,
+      estado TEXT
+    )`);
+    const res = await pool.query("SELECT * FROM pedidos");
+    if (res.rows.length > 0) {
+      PEDIDOS = res.rows.map(pedidoDesdeFila);
+      for (const p of PEDIDOS) {
+        if (p.recibo && p.recibo_b64) {
+          RECIBOS_MEM[p.recibo.replace("recibos/", "")] = p.recibo_b64;
+        }
+      }
+      console.log("📦 Pedidos cargados desde la base de datos:", PEDIDOS.length);
+    } else if (PEDIDOS.length > 0) {
+      await guardarPedidos(); // primera vez: migra pedidos.json a la BD
+      console.log("📤 Pedidos migrados a la base de datos:", PEDIDOS.length);
+    }
+  } catch (e) {
+    console.error("⚠️ No se pudo conectar a la BD (se seguirá usando pedidos.json):", e.message);
+  }
+}
+
+async function guardarPedidos() {
+  if (pool) {
+    try {
+      for (const p of PEDIDOS) {
+        await pool.query(
+          `INSERT INTO pedidos (id, fecha, numero, nombre, productos, talla, texto, recibo, recibo_b64, estado)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+           ON CONFLICT (id) DO UPDATE SET
+             fecha=EXCLUDED.fecha, numero=EXCLUDED.numero, nombre=EXCLUDED.nombre,
+             productos=EXCLUDED.productos, talla=EXCLUDED.talla, texto=EXCLUDED.texto,
+             recibo=EXCLUDED.recibo, recibo_b64=EXCLUDED.recibo_b64, estado=EXCLUDED.estado`,
+          [p.id, p.fecha, p.numero || "", p.nombre || "Sin nombre", JSON.stringify(p.productos || []), p.talla || "", p.texto || "", p.recibo || null, p.recibo_b64 || null, p.estado || "pendiente"]
+        );
+      }
+    } catch (e) {
+      console.error("⚠️ Error guardando en la BD:", e.message);
+    }
+  }
   try {
     fs.writeFileSync(PEDIDOS_PATH, JSON.stringify(PEDIDOS, null, 2));
   } catch (e) {
-    console.error("Error guardando pedidos:", e.message);
+    console.error("Error guardando pedidos.json:", e.message);
   }
 }
 
@@ -307,6 +415,7 @@ function crearPedido(numero, nombre, productos, texto) {
     talla: "",
     texto: texto || "",
     recibo: null,
+    recibo_b64: null,
     estado: "pendiente", // pendiente | confirmado | enviando | entregado
   };
   PEDIDOS.push(pedido);
@@ -566,6 +675,8 @@ app.post("/webhook", async (req, res) => {
                   const archivo = `${pedido.id}.${media.ext}`;
                   fs.writeFileSync(path.join(RECIBOS_DIR, archivo), media.buffer);
                   pedido.recibo = `recibos/${archivo}`;
+                  pedido.recibo_b64 = media.buffer.toString("base64");
+                  RECIBOS_MEM[archivo] = pedido.recibo_b64;
                   guardarPedidos();
                   await notificarOwner(
                     `📎 *COMPROBANTE RECIBIDO*\nPedido: *${pedido.id}* — Cliente: ${pedido.nombre} (${pedido.numero})\nProducto: ${(pedido.productos || []).join(", ") || "-"}\n📷 Foto: ${baseUrl}/${pedido.recibo}\n📋 Pedidos: ${baseUrl}/pedidos\n➡️ Verifica el pago y responde: *"confirmar ${pedido.id}"*`
@@ -944,13 +1055,13 @@ app.post("/api/admin/accion", async (req, res) => {
     return res.json({ ok: false, error: "Acción inválida" });
   }
 
-  res.json({ ok: true, pedido });
+  res.json({ ok: true, pedido: pedidoPublico(pedido) });
 });
 
 // Lista de pedidos para la app admin
 app.get("/api/admin/pedidos", (req, res) => {
   if (!esAdmin(req)) return res.status(401).json({ ok: false, error: "No autorizado" });
-  res.json(PEDIDOS.slice().reverse());
+  res.json(PEDIDOS.slice().reverse().map(pedidoPublico));
 });
 
 // ---------- API PARA LA TIENDA WEB ----------
@@ -968,6 +1079,7 @@ app.post("/api/pedido", async (req, res) => {
       talla: talla || "",
       texto: "🛒 Pedido desde la página web",
       recibo: null,
+      recibo_b64: null,
       estado: "pendiente",
       origen: "web",
     };
@@ -1096,7 +1208,7 @@ th,td{border:1px solid #2a2a2a;padding:10px;text-align:left;font-size:13px;verti
 th{background:#1a1a1a}td{background:#111}
 </style></head><body>
 <h1>🛒 Pedidos e intereses de Nyvex Drop</h1>
-<p>El historial se guarda en pedidos.json; al reiniciar Render recarga lo que haya en disco.</p>
+<p>✅ El historial se guarda en una base de datos en línea (Neon), no se pierde al reiniciar.</p>
 <table>
 <thead><tr><th>Fecha</th><th>ID</th><th>Cliente</th><th>Número</th><th>Producto</th><th>Mensaje</th><th>Comprobante</th><th>Estado</th></tr></thead>
 <tbody>${filas || "<tr><td colspan='8'>Sin pedidos aún</td></tr>"}</tbody>
@@ -1104,6 +1216,8 @@ th{background:#1a1a1a}td{background:#111}
 </body></html>`);
 });
 
-app.listen(PORT, () => {
-  console.log(`🤖 Nyvex Bot escuchando en el puerto ${PORT}`);
+conectarBaseDeDatos().then(() => {
+  app.listen(PORT, () => {
+    console.log(`🤖 Nyvex Bot escuchando en el puerto ${PORT}`);
+  });
 });
