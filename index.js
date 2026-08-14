@@ -1256,7 +1256,7 @@ function renderMensaje(m){
   var rol=m.rol==="user"?"cliente":(m.rol==="asesor"?"asesor":"bot");
   var texto=String(m.texto||"");
   if(texto.indexOf("[cliente")===0)texto="📎 "+texto;
-  return '<div class="mensaje '+rol+'">'+texto.replace(/</g,"&lt;").replace(/\n/g,"<br>")+'<span class="hora">'+horaCorta(m.fecha)+'</span></div>';
+  return '<div class="mensaje '+rol+'">'+texto.replace(/</g,"&lt;").replace(/\\n/g,"<br>")+'<span class="hora">'+horaCorta(m.fecha)+'</span></div>';
 }
 
 function cargarChats(){
