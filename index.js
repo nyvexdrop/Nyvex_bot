@@ -195,6 +195,14 @@ async function conectarBaseDeDatos() {
       numero TEXT PRIMARY KEY,
       nombre TEXT
     )`);
+    await pool.query(`CREATE TABLE IF NOT EXISTS conversaciones (
+      id SERIAL PRIMARY KEY,
+      numero TEXT,
+      rol TEXT,
+      texto TEXT,
+      fecha TEXT
+    )`);
+    await pool.query("CREATE INDEX IF NOT EXISTS idx_conversaciones_numero ON conversaciones (numero, id)");
     const cliRes = await pool.query("SELECT numero, nombre FROM clientes");
     for (const c of cliRes.rows) {
       if (c.numero && c.nombre) CLIENTES.set(c.numero, c.nombre);
@@ -514,6 +522,21 @@ function agregarHistorial(numero, rol, texto) {
   if (chat.historial.length > 16) {
     chat.historial = chat.historial.slice(-16);
   }
+  guardarConversacion(numero, rol, texto);
+}
+
+// Guarda cada mensaje de la conversación en la BD para poder leer todo el historial
+async function guardarConversacion(numero, rol, texto) {
+  if (!numero || !rol || !texto) return;
+  if (!pool) return;
+  try {
+    await pool.query(
+      "INSERT INTO conversaciones (numero, rol, texto, fecha) VALUES ($1,$2,$3,$4)",
+      [numero, rol, String(texto).slice(0, 2000), new Date().toISOString()]
+    );
+  } catch (e) {
+    console.error("⚠️ Error guardando conversación:", e.message);
+  }
 }
 
 // ---------- PEDIDOS ----------
@@ -671,7 +694,9 @@ async function procesoComandoOwner(texto) {
   if (!pedido) return "No hay pedidos pendientes para actualizar.";
 
   if (rechazo) {
-    await enviarWhatsApp(pedido.numero, mensajeRechazoCliente(pedido, rechazo));
+    const msgRechazo = mensajeRechazoCliente(pedido, rechazo);
+    await enviarWhatsApp(pedido.numero, msgRechazo);
+    guardarConversacion(pedido.numero, "asesor", msgRechazo);
     const motivo = rechazo === "falso" ? "falso" : rechazo === "no_coincide" ? "que no coincide" : "borroso";
     return `⚠️ Le avisaste a *${pedido.nombre || "cliente"}* que su comprobante (*${pedido.id}*) se ve *${motivo}* y le pediste reenviarlo.`;
   }
@@ -680,6 +705,7 @@ async function procesoComandoOwner(texto) {
   guardarPedidos();
   const msg = mensajeEstadoCliente(pedido);
   await enviarWhatsApp(pedido.numero, msg);
+  guardarConversacion(pedido.numero, "asesor", msg);
   return `✅ Pedido *${pedido.id}* → *${accion}*. Cliente notificado.`;
 }
 
@@ -1111,12 +1137,34 @@ body{font-family:system-ui,sans-serif;background:#0a0a0a;color:#fff;margin:0;pad
 .b-falso{background:#8a2b2b}.b-no{background:#5f3b00}.b-borroso{background:#4a4a4a}.b-borrar{background:#c62828}
 .aviso{text-align:center;color:#9a9a9a;margin-top:14px;font-size:.8rem}
 .vacio{text-align:center;color:#9a9a9a;margin-top:3rem}
+.tabs{position:sticky;top:0;background:#0a0a0a;display:flex;gap:8px;padding:10px 0;border-bottom:1px solid #2a2a2a;z-index:9}
+.tab{flex:1;text-align:center;padding:10px;border-radius:10px;border:1px solid #2a2a2a;color:#9a9a9a;font-weight:700;cursor:pointer;background:#1a1a1a}
+.tab.activa{background:#fff;color:#0a0a0a;border-color:#fff}
+.chat{background:#1a1a1a;border:1px solid #2a2a2a;border-radius:14px;padding:12px;margin-top:12px}
+.chat-cab{display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;flex-wrap:wrap}
+.chat-nombre{font-weight:800;font-size:.95rem}
+.chat-num{color:#9a9a9a;font-size:.8rem}
+.chat-msgs{display:none;margin-top:10px}
+.chat.abierto .chat-msgs{display:block}
+.mensaje{margin:6px 0;padding:8px 10px;border-radius:10px;font-size:.85rem;line-height:1.35;white-space:pre-wrap;word-break:break-word;max-width:92%}
+.mensaje.cliente{align-self:flex-start;background:#0f3d1a;color:#e8f5e9}
+.mensaje.bot{align-self:flex-start;background:#2a2a2a;color:#e0e0e0}
+.mensaje.asesor{align-self:flex-end;background:#1565c0;color:#fff;margin-left:auto}
+.mensaje .hora{display:block;font-size:.68rem;color:#9a9a9a;margin-top:3px}
+.enviar-caja{display:flex;gap:8px;margin-top:10px}
+.enviar-caja textarea{flex:1;background:#0a0a0a;border:1px solid #2a2a2a;color:#fff;border-radius:10px;padding:9px;font-size:.85rem;resize:none;font-family:system-ui,sans-serif}
+.enviar-caja button{background:#1565c0;color:#fff;border:none;border-radius:10px;padding:0 16px;font-weight:700;font-size:.9rem}
 </style></head><body>
 <div class="topbar">
 <h1>🛒 Nyvex Admin</h1>
 <div><a href="#" id="recargar">🔄 Actualizar</a> · <a href="/">🌐 Tienda</a></div>
 </div>
+<div class="tabs">
+<div class="tab activa" id="tab-pedidos" onclick="cambiarVista('pedidos')">🛒 Pedidos</div>
+<div class="tab" id="tab-chats" onclick="cambiarVista('chats')">💬 Chats</div>
+</div>
 <div id="lista"><p class="vacio">Cargando…</p></div>
+<div id="chats" style="display:none"><p class="vacio">Cargando…</p></div>
 <p class="aviso">Se actualiza solo cada 15 segundos. Un toque en un botón avisa al cliente por WhatsApp.</p>
 <script>
 var PASS = ${JSON.stringify(ADMIN_PASSWORD)};
@@ -1191,7 +1239,67 @@ function eliminar(id){
     .catch(function(){alert("Sin conexión");});
 }
 
-document.getElementById("recargar").addEventListener("click",function(e){e.preventDefault();cargar();});
+// ---- VISTA DE CHATS (historial completo + mensaje personalizado) ----
+function cambiarVista(v){
+  document.getElementById("tab-pedidos").className="tab"+(v==="pedidos"?" activa":"");
+  document.getElementById("tab-chats").className="tab"+(v==="chats"?" activa":"");
+  document.getElementById("lista").style.display=v==="pedidos"?"":"none";
+  document.getElementById("chats").style.display=v==="chats"?"":"none";
+  if(v==="chats")cargarChats();
+}
+
+function horaCorta(iso){
+  try{return new Date(iso).toLocaleString("es-MX",{dateStyle:"short",timeStyle:"short"});}catch(e){return iso||"";}
+}
+
+function renderMensaje(m){
+  var rol=m.rol==="user"?"cliente":(m.rol==="asesor"?"asesor":"bot");
+  var texto=String(m.texto||"");
+  if(texto.indexOf("[cliente")===0)texto="📎 "+texto;
+  return '<div class="mensaje '+rol+'">'+texto.replace(/</g,"&lt;").replace(/\n/g,"<br>")+'<span class="hora">'+horaCorta(m.fecha)+'</span></div>';
+}
+
+function cargarChats(){
+  fetch("/api/admin/conversaciones?pass="+PASS).then(function(r){return r.json();}).then(function(data){
+    var el=document.getElementById("chats");
+    if(!Array.isArray(data)){el.innerHTML='<p class="vacio">Sin acceso. <a href="/admin">Volver a entrar</a></p>';return;}
+    if(!data.length){el.innerHTML='<p class="vacio">Todavía no hay conversaciones registradas.</p>';return;}
+    el.innerHTML=data.map(function(c){
+      var nombre=c.nombre?c.nombre+" · ":"";
+      var msgs=c.mensajes.map(renderMensaje).join("");
+      return '<div class="chat" id="chat-'+c.numero+'">'+
+        '<div class="chat-cab" onclick="alternarChat(\\''+c.numero+'\\')">'+
+          '<div><span class="chat-nombre">'+nombre.replace(/</g,"&lt;")+'</span><br><span class="chat-num">📱 '+c.numero+' · '+c.mensajes.length+' mensajes · '+horaCorta(c.fechaUltimo)+'</span></div>'+
+          '<span style="color:#7fb2ff;font-size:.8rem">Ver chat ▾</span>'+
+        '</div>'+
+        '<div class="chat-msgs">'+msgs+
+          '<div class="enviar-caja"><textarea id="txt-'+c.numero+'" rows="2" placeholder="Escribe un mensaje personalizado para este cliente y envíalo por WhatsApp…"></textarea>'+
+          '<button onclick="enviarMensaje(\\''+c.numero+'\\',this)">Enviar ➤</button></div>'+
+        '</div></div>';
+    }).join("");
+  }).catch(function(){el.innerHTML='<p class="vacio">Sin conexión. Reintentando…</p>';});
+}
+
+function alternarChat(num){
+  var el=document.getElementById("chat-"+num);
+  if(el)el.classList.toggle("abierto");
+}
+
+function enviarMensaje(num,btn){
+  var ta=document.getElementById("txt-"+num);
+  var msg=(ta.value||"").trim();
+  if(!msg){alert("Escribe un mensaje primero");return;}
+  btn.disabled=true;
+  fetch("/api/admin/enviar?pass="+PASS,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({numero:num,texto:msg})})
+    .then(function(r){return r.json();})
+    .then(function(d){
+      if(d.ok){ta.value="";cargarChats();}
+      else{alert(d.error||"No se pudo enviar");btn.disabled=false;}
+    })
+    .catch(function(){alert("Sin conexión");btn.disabled=false;});
+}
+
+document.getElementById("recargar").addEventListener("click",function(e){e.preventDefault();cargar();if(document.getElementById("chats").style.display!=="none")cargarChats();});
 cargar();
 setInterval(cargar,15000);
 </script>
@@ -1318,11 +1426,13 @@ app.post("/api/admin/accion", async (req, res) => {
     const msg = mensajeEstadoCliente(pedido);
     if (msg && pedido.numero) {
       await enviarWhatsApp(pedido.numero, msg).catch(() => {});
+      guardarConversacion(pedido.numero, "asesor", msg);
     }
   } else if (rechazos[accion]) {
     const msg = mensajeRechazoCliente(pedido, rechazos[accion]);
     if (msg && pedido.numero) {
       await enviarWhatsApp(pedido.numero, msg).catch(() => {});
+      guardarConversacion(pedido.numero, "asesor", msg);
     }
   } else {
     return res.json({ ok: false, error: "Acción inválida" });
@@ -1364,6 +1474,58 @@ app.post("/api/admin/eliminar", async (req, res) => {
 app.get("/api/admin/pedidos", (req, res) => {
   if (!esAdmin(req)) return res.status(401).json({ ok: false, error: "No autorizado" });
   res.json(PEDIDOS.slice().reverse().map(pedidoPublico));
+});
+
+// Conversaciones guardadas de todos los chats (para leer el historial completo)
+app.get("/api/admin/conversaciones", async (req, res) => {
+  if (!esAdmin(req)) return res.status(401).json({ ok: false, error: "No autorizado" });
+  if (!pool) return res.json([]);
+  try {
+    const r = await pool.query(
+      `SELECT numero, rol, texto, fecha FROM conversaciones
+       WHERE numero IS NOT NULL AND numero <> ''
+       ORDER BY id ASC`
+    );
+    const chats = new Map();
+    for (const fila of r.rows) {
+      if (!chats.has(fila.numero)) chats.set(fila.numero, []);
+      chats.get(fila.numero).push({
+        rol: fila.rol,
+        texto: fila.texto,
+        fecha: fila.fecha,
+      });
+    }
+    const lista = [];
+    for (const [numero, mensajes] of chats) {
+      lista.push({
+        numero,
+        nombre: CLIENTES.get(numero) || "",
+        mensajes,
+        fechaUltimo: mensajes[mensajes.length - 1]?.fecha || "",
+      });
+    }
+    lista.sort((a, b) => (b.fechaUltimo || "").localeCompare(a.fechaUltimo || ""));
+    res.json(lista);
+  } catch (e) {
+    console.error("Error leyendo conversaciones:", e.message);
+    res.json([]);
+  }
+});
+
+// Enviar un mensaje personalizado del asesor al cliente por WhatsApp
+app.post("/api/admin/enviar", async (req, res) => {
+  if (!esAdmin(req)) return res.status(401).json({ ok: false, error: "No autorizado" });
+  const { numero, texto } = req.body || {};
+  const num = String(numero || "").trim();
+  const msg = String(texto || "").trim();
+  if (!num || !msg) return res.json({ ok: false, error: "Falta número o mensaje" });
+  try {
+    await enviarWhatsApp(num, msg);
+    guardarConversacion(num, "asesor", msg);
+    res.json({ ok: true });
+  } catch (e) {
+    res.json({ ok: false, error: "No se pudo enviar: " + e.message });
+  }
 });
 
 // ---------- API PARA LA TIENDA WEB ----------
